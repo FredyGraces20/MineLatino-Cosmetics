@@ -17,6 +17,11 @@ export function cosmeticId(value) {
   return value;
 }
 export const SLOTS = ['CAPE', 'HAT', 'WINGS', 'BACKPACK', 'PET'];
+
+/** Check if hostname matches an allowed domain or any of its subdomains. */
+function isAllowedHost(hostname, allowedDomains) {
+  return allowedDomains.some(domain => hostname === domain || hostname.endsWith('.' + domain));
+}
 export const DEFAULT_MENU = { schemaVersion: 1, enabled: true, buttons: [{ label: 'Cosméticos MineLatino', action: 'WARDROBE' }], labels: {}, vanillaUrls: {} };
 export function validateMenu(config) {
   requireThat(config && config.schemaVersion === 1 && typeof config.enabled === 'boolean' && Array.isArray(config.buttons) && config.buttons.length <= 3, 'Menú inválido');
@@ -33,7 +38,7 @@ export function validateMenu(config) {
     requireThat(allowed.includes(key), 'Botón original desconocido para URL');
     let parsed;
     try { parsed = new URL(url); } catch { throw new ApiError(400, 'URL inválida'); }
-    requireThat(parsed.protocol === 'https:' && ['minelatino.com', 'www.minelatino.com', 'discord.com', 'www.discord.com'].includes(parsed.hostname) && !parsed.username && !parsed.password && !parsed.port, 'URL no permitida');
+    requireThat(parsed.protocol === 'https:' && isAllowedHost(parsed.hostname, ['minelatino.com', 'minelatino.shop', 'discord.com']) && !parsed.username && !parsed.password && !parsed.port, 'URL no permitida');
     return [key, parsed.href];
   }));
   const buttons = config.buttons.map(button => {
@@ -42,7 +47,7 @@ export function validateMenu(config) {
     if (button.action === 'WEBSITE') {
       let url;
       try { url = new URL(button.url); } catch { throw new ApiError(400, 'URL inválida'); }
-      requireThat(url.protocol === 'https:' && ['minelatino.com', 'www.minelatino.com'].includes(url.hostname) && !url.username && !url.password && !url.port, 'URL no permitida');
+      requireThat(url.protocol === 'https:' && isAllowedHost(url.hostname, ['minelatino.com', 'minelatino.shop']) && !url.username && !url.password && !url.port, 'URL no permitida');
       result.url = url.href;
     }
     return result;

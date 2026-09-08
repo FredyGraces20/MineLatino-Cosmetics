@@ -6,4 +6,18 @@ pluginManagement {
     }
 }
 rootProject.name = 'minelatino-cosmetics'
-include 'common', 'fabric', 'forge'
+
+include 'common', 'fabric'
+
+// Only include forge if a forge.version is configured for the target MC version.
+def mcVersion = (gradle.startParameter.projectProperties['mcVersion'] ?: '1.21.4')
+def props = new Properties()
+def propsFile = new File(settingsDir, 'versions.properties')
+if (propsFile.exists()) {
+    propsFile.withInputStream { props.load(it) }
+    if (props.getProperty("${mcVersion}.forge.version")) {
+        include 'forge'
+    } else {
+        println "Forge: no forge.version for MC ${mcVersion}, skipping"
+    }
+}
