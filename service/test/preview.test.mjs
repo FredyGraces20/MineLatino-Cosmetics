@@ -9,6 +9,12 @@ function renderer(overrides = {}) {
     vm.runInContext(readFileSync(new URL('../public/' + file, import.meta.url), 'utf8'), context);
   return context.MineLatinoCosmetics;
 }
+
+function editor() {
+  const context = vm.createContext({});
+  vm.runInContext(readFileSync(new URL('../public/cosmetic-editor.js', import.meta.url), 'utf8'), context);
+  return context.MineLatinoCosmeticEditor;
+}
 const model = {
   texture_size: [128, 128], textures: { main: 'pack/main', bubbles: 'pack/bubbles' },
   elements: [{ from: [0,0,0], to: [16,16,16], faces: {
@@ -53,5 +59,24 @@ test('admin inline scripts remain syntactically valid', () => {
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   for (const match of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) new vm.Script(match[1]);
   assert(html.includes('src="cosmetic-preview.js"'));
+  assert(html.includes('src="cosmetic-editor.js"'));
   assert(!html.includes('parseBlockbenchModel('));
+});
+
+test('editor converts API transforms exactly like the Minecraft renderer', () => {
+  const api = editor();
+  const source = { translation: [8, 16, -4], rotation: [15, 30, -45], scale: [2, 1.5, .75] };
+  const scene = api.toSceneTransform(source);
+  assert.deepEqual(Array.from(scene.position), [-.5, 1, .25]);
+  assert.deepEqual(Array.from(scene.scale), [2, 1.5, .75]);
+  const restored = api.fromSceneTransform(scene.position, scene.rotation, scene.scale);
+  for (const key of ['translation', 'rotation', 'scale'])
+    assert.deepEqual(Array.from(restored[key]).map(n => Math.round(n * 1e9) / 1e9), source[key]);
+});
+
+test('backpack editor uses the torso anchor, Y/Z flip and back-facing yaw', () => {
+  const base = editor().slotBase('backpack');
+  assert.deepEqual(Array.from(base.position), [0, .2, .3]);
+  assert.deepEqual(Array.from(base.scale), [1, -1, -1]);
+  assert.equal(base.yaw, Math.PI);
 });
