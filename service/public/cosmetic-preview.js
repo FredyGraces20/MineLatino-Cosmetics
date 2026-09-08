@@ -48,6 +48,7 @@ var MineLatinoCosmetics = (() => {
     if (!Array.isArray(model?.elements) || !model.elements.length || model.elements.length > 4096) throw new Error("Se requiere un modelo Minecraft Java con 1\u20134096 elementos");
     const positions = [], uv = [];
     const names = [], groups = [];
+    const tw = model.texture_size?.[0] || 16, th = model.texture_size?.[1] || 16;
     for (const e of model.elements) {
       if (!vector(e.from, 3) || !vector(e.to, 3) || !e.faces) throw new Error("Elemento inv\xE1lido");
       const [x, y, z] = e.from, [X, Y, Z] = e.to;
@@ -91,7 +92,7 @@ var MineLatinoCosmetics = (() => {
         for (const i of [0, 1, 2, 0, 2, 3]) {
           positions.push(...vertices[i].toArray());
           const index = (i + turn / 90) % 4;
-          uv.push(rect[index < 2 ? 0 : 2] / 16, 1 - rect[index === 0 || index === 3 ? 1 : 3] / 16);
+          uv.push(rect[index < 2 ? 0 : 2] / tw, 1 - rect[index === 0 || index === 3 ? 1 : 3] / th);
         }
       }
     }

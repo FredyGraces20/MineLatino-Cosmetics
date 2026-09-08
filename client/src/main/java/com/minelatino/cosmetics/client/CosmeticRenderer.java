@@ -159,8 +159,8 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
                         applyDisplayTransform(poseStack, serverBackpack);
                     } else {
                         var b = model.backpack;
-                        poseStack.translate(b.translation()[0]/16,b.translation()[1]/16,b.translation()[2]/16);
-                        poseStack.mulPose(new Quaternionf().rotationXYZ((float)Math.toRadians(b.rotation()[0]),(float)Math.toRadians(b.rotation()[1]),(float)Math.toRadians(b.rotation()[2])));
+                        poseStack.translate(-b.translation()[0]/16,b.translation()[1]/16,-b.translation()[2]/16);
+                        poseStack.mulPose(new Quaternionf().rotationXYZ((float)Math.toRadians(-b.rotation()[0]),(float)Math.toRadians(b.rotation()[1]),(float)Math.toRadians(-b.rotation()[2])));
                         poseStack.scale(b.scale()[0],b.scale()[1],b.scale()[2]);
                     }
                 }
@@ -182,13 +182,15 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
         }
     }
 
-    /** Applies a server-side transform (translation in 0-16 space, rotation in degrees, scale). */
+    /** Applies a server-side transform (translation in 0-16 space, rotation in degrees, scale).
+     *  The scale(1,-1,-1) coordinate flip inverts X/Z, so we negate those components
+     *  to match the launcher convention (which applies Ry(180) before the display transform). */
     private static void applyDisplayTransform(PoseStack poseStack, ApiClient.TransformData t) {
-        poseStack.translate(t.translation()[0]/16, t.translation()[1]/16, t.translation()[2]/16);
+        poseStack.translate(-t.translation()[0]/16, t.translation()[1]/16, -t.translation()[2]/16);
         poseStack.mulPose(new Quaternionf().rotationXYZ(
-                (float)Math.toRadians(t.rotation()[0]),
+                (float)Math.toRadians(-t.rotation()[0]),
                 (float)Math.toRadians(t.rotation()[1]),
-                (float)Math.toRadians(t.rotation()[2])));
+                (float)Math.toRadians(-t.rotation()[2])));
         poseStack.scale(t.scale()[0], t.scale()[1], t.scale()[2]);
     }
 
