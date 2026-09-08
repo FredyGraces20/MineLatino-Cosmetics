@@ -1,6 +1,9 @@
 package com.minelatino.cosmetics.client;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.minelatino.cosmetics.core.MenuPolicy;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -12,12 +15,38 @@ import net.minecraft.client.gui.screens.ConfirmLinkScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.contents.TranslatableContents;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Shared UI, called by Fabric's mixin and Forge's native screen event. */
 public final class PauseMenu {
+    private static final Logger LOG = LoggerFactory.getLogger("MineLatino Cosmetics");
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private PauseMenu() {}
+
+    /**
+     * Sync the menu config from the backend before reading it locally.
+     * This ensures the player always has the latest configuration.
+     */
+    private static void syncMenuConfig() {
+        try {
+            ApiClient api = CosmeticsClient.instance().api();
+            ApiClient.PauseMenuConfigResponse response = api.pauseMenuConfig();
+            if (response != null && response.config() != null) {
+                java.nio.file.Path path = Minecraft.getInstance().gameDirectory.toPath()
+                    .resolve("config/minelatino-cosmetics/menu.json");
+                Files.createDirectories(path.getParent());
+                Files.writeString(path, GSON.toJson(response.config()));
+            }
+        } catch (Exception e) {
+            LOG.debug("Menu config sync failed, using local cache", e);
+        }
+    }
+
     public static void install(Screen screen, Consumer<AbstractWidget> add) {
         if (screen.children().isEmpty()) return;
+        // Sync from backend before reading
+        syncMenuConfig();
         Minecraft minecraft = Minecraft.getInstance();
         MenuConfig config = MenuConfig.read(minecraft.gameDirectory.toPath());
         if (!config.enabled()) return;

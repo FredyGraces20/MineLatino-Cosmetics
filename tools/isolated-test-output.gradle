@@ -1,0 +1,10 @@
+// Optional local workaround for OneDrive locking previous Gradle test result files.
+def diagnosticRun = System.currentTimeMillis().toString()
+allprojects {
+    layout.buildDirectory.set(file('build/heart-of-sea-alpha6'))
+    tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+        binaryResultsDirectory.set(layout.buildDirectory.dir("isolated-tests/${diagnosticRun}/binary"))
+        reports.junitXml.outputLocation.set(layout.buildDirectory.dir("isolated-tests/${diagnosticRun}/xml"))
+        reports.html.outputLocation.set(layout.buildDirectory.dir("isolated-tests/${diagnosticRun}/html"))
+    }
+}

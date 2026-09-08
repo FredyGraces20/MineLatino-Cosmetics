@@ -148,6 +148,12 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
                 poseStack.translate(0, 0.3, "BACKPACK".equals(slot) ? 0.30 : 0.16);
                 // Java element models use Y-up; player ModelPart coordinates use Y-down.
                 poseStack.scale(1, -1, -1);
+                if ("BACKPACK".equals(slot)) {
+                    var b = model.backpack;
+                    poseStack.translate(b.translation()[0]/16,b.translation()[1]/16,b.translation()[2]/16);
+                    poseStack.mulPose(new Quaternionf().rotationXYZ((float)Math.toRadians(b.rotation()[0]),(float)Math.toRadians(b.rotation()[1]),(float)Math.toRadians(b.rotation()[2])));
+                    poseStack.scale(b.scale()[0],b.scale()[1],b.scale()[2]);
+                }
             }
             for (CosmeticModel.Quad quad : model.quads) {
                 var material = resource.materials().get(quad.texture());

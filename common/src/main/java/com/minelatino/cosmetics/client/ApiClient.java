@@ -137,6 +137,16 @@ public final class ApiClient implements WardrobeController.Gateway {
         return GSON.fromJson(response.body(), HealthResponse.class);
     }
 
+    // ── Pause Menu Config ─────────────────────────────────────────────
+
+    public record PauseMenuConfigResponse(int revision, MenuConfig config) {}
+
+    public PauseMenuConfigResponse pauseMenuConfig() throws Exception {
+        HttpResponse<String> response = get("/v1/client-config/pause-menu", null);
+        if (response.statusCode() != 200) throw new ApiException(response.statusCode(), "pause-menu");
+        return GSON.fromJson(response.body(), PauseMenuConfigResponse.class);
+    }
+
     // ── HTTP primitives ───────────────────────────────────────────────
 
     private HttpResponse<String> get(String path, String token) throws Exception {

@@ -11,15 +11,17 @@ public final class CosmeticModel {
     public final List<ModelElement> elements;
     public final List<Quad> quads;
     public final DisplayTransform head;
+    public final DisplayTransform backpack;
 
-    private CosmeticModel(List<ModelElement> elements, DisplayTransform head) {
+    private CosmeticModel(List<ModelElement> elements, DisplayTransform head, DisplayTransform backpack) {
         this.elements = List.copyOf(elements);
         this.head = head;
+        this.backpack = backpack;
         this.quads = elements.stream().flatMap(e -> generateQuads(e, 0, 0, 0).stream()).toList();
     }
 
     public static CosmeticModel empty() {
-        return new CosmeticModel(List.of(), DisplayTransform.identity());
+        return new CosmeticModel(List.of(), DisplayTransform.identity(), DisplayTransform.identity());
     }
 
     /** Invalid JSON is an error, not a PNG-only cosmetic: keep the last good resource on failure. */
@@ -71,7 +73,12 @@ public final class CosmeticModel {
             head = new DisplayTransform(vector(h, "translation", new float[3], 3),
                     vector(h, "rotation", new float[3], 3), vector(h, "scale", new float[]{1, 1, 1}, 3));
         }
-        return new CosmeticModel(elements, head);
+        DisplayTransform backpack = DisplayTransform.identity();
+        if (root.has("display") && root.getAsJsonObject("display").has("minelatino_backpack")) {
+            JsonObject b = root.getAsJsonObject("display").getAsJsonObject("minelatino_backpack");
+            backpack = new DisplayTransform(vector(b,"translation",new float[3],3),vector(b,"rotation",new float[3],3),vector(b,"scale",new float[]{1,1,1},3));
+        }
+        return new CosmeticModel(elements, head, backpack);
     }
 
     private static float[] vector(JsonObject obj, String key, float[] fallback, int size) {
