@@ -79,6 +79,23 @@ tr:hover td { background: var(--accent-dim); }
 .preview-controls button { padding: 5px 12px; border: 1px solid rgba(255,255,255,.12); background: rgba(20,22,28,.85); border-radius: 7px; color: #ccc; cursor: pointer; font-size: .75rem; }
 .preview-controls button:hover { background: rgba(20,22,28,.95); color: #fff; }
 
+/* ── Transform Editor ──────────────────────────────────────── */
+.transform-editor { border-top: 1px solid var(--border); padding: 12px; background: var(--well); }
+.te-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.te-row label { color: var(--dim); font-size: .75rem; white-space: nowrap; }
+.te-row select, .te-row input[type=number] { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 4px 6px; font-size: .75rem; }
+.te-row input[type=number] { width: 62px; text-align: center; }
+.te-row select { min-width: 90px; }
+.te-mode-btn { padding: 4px 10px; border: 1px solid var(--border); background: var(--surface); color: var(--dim); border-radius: 6px; cursor: pointer; font-size: .72rem; }
+.te-mode-btn.active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+.te-group { background: var(--surface); border-radius: 8px; padding: 6px 8px; }
+.te-group-title { color: var(--dim); font-size: .68rem; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+.te-xyz { display: flex; gap: 4px; align-items: center; }
+.te-xyz span { font-size: .7rem; font-weight: 600; width: 12px; text-align: center; }
+.te-xyz span.x { color: #f06565; } .te-xyz span.y { color: #4ecdc4; } .te-xyz span.z { color: #53dfed; }
+.te-actions { display: flex; gap: 6px; }
+.te-actions .btn { font-size: .75rem; padding: 5px 14px; }
+
 /* ── File list ─────────────────────────────────────────────── */
 .file-row { display: flex; align-items: center; gap: .75rem; padding: .6rem .75rem; border-radius: var(--radius-sm); background: var(--well); border: 1px solid var(--border); margin-bottom: .5rem; }
 .file-row img { width: 40px; height: 40px; image-rendering: pixelated; border-radius: 4px; border: 1px solid var(--border); object-fit: contain; background: #000; }
@@ -173,7 +190,10 @@ tr:hover td { background: var(--accent-dim); }
               <div class="preview-controls hidden" id="preview-controls">
                 <button onclick="previewTurn(false)">Frente</button>
                 <button onclick="previewTurn(true)">Espalda</button>
+                <button onclick="openTransformEditor()" style="color:var(--accent);border-color:var(--accent)">✏️ Editar posición</button>
               </div>
+              <!-- Transform Editor (injected by JS) -->
+              <div class="transform-editor hidden" id="transform-editor"></div>
             </div>
           </div>
         </div>
@@ -284,6 +304,14 @@ tr:hover td { background: var(--accent-dim); }
 </div>
 
 <script src="three.min.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.156.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156.0/examples/jsm/"
+  }
+}
+</script>
 <script>
 // ════════════════════════════════════════════════════════════
 // Core
@@ -693,6 +721,361 @@ async function loadAudit() {
     if (r.status === 200) showPanel(); else showLogin();
   } else showLogin();
 })();
+</script>
+<script type="module">
+// ════════════════════════════════════════════════════════════
+// Transform Editor (Three.js + TransformControls)
+// ════════════════════════════════════════════════════════════
+import * as THREE from 'three';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
+
+let edRenderer, edScene, edCamera, edControls, edCosmeticMesh, edPlayerGroup;
+let edAnimId, edCurrentCosmeticId = null, edTransformMode = 'translate';
+
+function edInit() {
+  if (edRenderer) return;
+  const container = document.getElementById('transform-editor');
+  const canvas = document.createElement('canvas');
+  canvas.id = 'ed-canvas';
+  canvas.style.cssText = 'display:block;width:100%;height:300px;border-radius:8px;';
+  container.insertBefore(canvas, container.firstChild);
+
+  edRenderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  edRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  edRenderer.setClearColor(0x13151c, 1);
+  const rect = canvas.getBoundingClientRect();
+  edRenderer.setSize(rect.width, rect.height, false);
+
+  edScene = new THREE.Scene();
+  edCamera = new THREE.PerspectiveCamera(35, rect.width / rect.height, 0.1, 500);
+  edScene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+  dir.position.set(3, 8, 10);
+  edScene.add(dir);
+  const dir2 = new THREE.DirectionalLight(0xffffff, 0.3);
+  dir2.position.set(-5, 2, -5);
+  edScene.add(dir2);
+
+  // Player reference model (Steve proportions, semi-transparent gray)
+  edPlayerGroup = createPlayerModel();
+  edScene.add(edPlayerGroup);
+
+  // TransformControls
+  edControls = new TransformControls(edCamera, canvas);
+  edControls.addEventListener('change', edOnTransformChange);
+  edControls.setTranslationSnap(0.0625); // 1/16 in -1..1 space
+  edControls.setRotationSnap(THREE.MathUtils.degToRad(15));
+  edControls.setScaleSnap(0.05);
+  edScene.add(edControls);
+}
+
+function createPlayerModel() {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x8b8b8b, transparent: true, opacity: 0.3, roughness: 1
+  });
+  // Steve proportions in -1..1 space (16 units = 2 units in this space)
+  // Head: 8x8x8 -> 0.5x0.5x0.5
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), mat);
+  head.position.set(0, 0.75, 0);
+  group.add(head);
+  // Body: 4x12x4 -> 0.25x0.75x0.25 (but 12 tall = 0.75)
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.75, 0.25), mat);
+  body.position.set(0, 0.125, 0);
+  group.add(body);
+  // Arms: 4x12x4 -> 0.25x0.75x0.25
+  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.75, 0.25), mat);
+  armL.position.set(-0.375, 0.125, 0);
+  group.add(armL);
+  const armR = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.75, 0.25), mat);
+  armR.position.set(0.375, 0.125, 0);
+  group.add(armR);
+  // Legs: 4x12x4 -> 0.25x0.75x0.25
+  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.75, 0.25), mat);
+  legL.position.set(-0.125, -0.625, 0);
+  group.add(legL);
+  const legR = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.75, 0.25), mat);
+  legR.position.set(0.125, -0.625, 0);
+  group.add(legR);
+  return group;
+}
+
+async function edLoadCosmeticModel(cosmeticId) {
+  if (edCosmeticMesh) {
+    edScene.remove(edCosmeticMesh);
+    edCosmeticMesh.geometry.dispose();
+    if (edCosmeticMesh.material.map) edCosmeticMesh.material.map.dispose();
+    edCosmeticMesh.material.dispose();
+    edCosmeticMesh = null;
+  }
+  try {
+    const [modelRes, texRes] = await Promise.all([
+      fetch(`/v1/resources/${cosmeticId}?type=model`, { credentials: 'omit' }),
+      fetch(`/v1/resources/${cosmeticId}`, { credentials: 'omit' }),
+    ]);
+    if (!modelRes.ok || !texRes.ok) return;
+    const model = JSON.parse(await modelRes.text());
+    const blob = await texRes.blob();
+    const bitmap = await createImageBitmap(blob, { imageOrientation: 'flipY' });
+
+    const positions = [], uvs = [], indices = [];
+    let idx = 0;
+    for (const el of (model.elements || [])) {
+      const [x1,y1,z1] = el.from.map(v => (v/16)*2-1);
+      const [x2,y2,z2] = el.to.map(v => (v/16)*2-1);
+      const faces = el.faces || {};
+      for (const [dirName, face] of Object.entries(faces)) {
+        const uv = face.uv || [0,0,16,16];
+        const u1 = uv[0]/16, v1 = 1-uv[3]/16, u2 = uv[2]/16, v2 = 1-uv[1]/16;
+        let verts;
+        switch(dirName) {
+          case 'north': verts = [[x1,y1,z1],[x2,y1,z1],[x2,y2,z1],[x1,y2,z1]]; break;
+          case 'south': verts = [[x2,y1,z2],[x1,y1,z2],[x1,y2,z2],[x2,y2,z2]]; break;
+          case 'east':  verts = [[x2,y1,z1],[x2,y1,z2],[x2,y2,z2],[x2,y2,z1]]; break;
+          case 'west':  verts = [[x1,y1,z2],[x1,y1,z1],[x1,y2,z1],[x1,y2,z2]]; break;
+          case 'up':    verts = [[x1,y2,z1],[x2,y2,z1],[x2,y2,z2],[x1,y2,z2]]; break;
+          case 'down':  verts = [[x1,y1,z2],[x2,y1,z2],[x2,y1,z1],[x1,y1,z1]]; break;
+          default: continue;
+        }
+        const uvCoords = [[u1,v2],[u2,v2],[u2,v1],[u1,v1]];
+        for (let i = 0; i < 4; i++) { positions.push(...verts[i]); uvs.push(...uvCoords[i]); }
+        indices.push(idx,idx+1,idx+2, idx,idx+2,idx+3);
+        idx += 4;
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    const tex = new THREE.Texture(bitmap);
+    tex.minFilter = THREE.NearestFilter; tex.magFilter = THREE.NearestFilter;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    edCosmeticMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.1, roughness: 1 }));
+    edScene.add(edCosmeticMesh);
+    bitmap.close();
+  } catch (e) {
+    console.error('Failed to load cosmetic model for editor', e);
+  }
+}
+
+function edAttachControls() {
+  if (!edCosmeticMesh) return;
+  edControls.attach(edCosmeticMesh);
+  edFitCamera();
+  edAnimate();
+}
+
+function edFitCamera() {
+  if (!edCosmeticMesh) return;
+  const box = new THREE.Box3().setFromObject(edCosmeticMesh);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  const dist = maxDim / (2 * Math.tan((edCamera.fov / 2) * Math.PI / 180)) * 2.2;
+  edCamera.position.set(center.x, center.y + 0.2, center.z - dist);
+  edCamera.lookAt(center);
+}
+
+function edOnTransformChange() {
+  if (!edCosmeticMesh) return;
+  const m = edCosmeticMesh;
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  // Convert from -1..1 space back to 0-16 space for display
+  setVal('te-tx', ((m.position.x + 1) * 8).toFixed(2));
+  setVal('te-ty', ((m.position.y + 1) * 8).toFixed(2));
+  setVal('te-tz', ((m.position.z + 1) * 8).toFixed(2));
+  setVal('te-rx', THREE.MathUtils.radToDeg(m.rotation.x).toFixed(1));
+  setVal('te-ry', THREE.MathUtils.radToDeg(m.rotation.y).toFixed(1));
+  setVal('te-rz', THREE.MathUtils.radToDeg(m.rotation.z).toFixed(1));
+  setVal('te-sx', m.scale.x.toFixed(3));
+  setVal('te-sy', m.scale.y.toFixed(3));
+  setVal('te-sz', m.scale.z.toFixed(3));
+}
+
+function edSetMode(mode) {
+  edTransformMode = mode;
+  edControls.setMode(mode);
+  document.querySelectorAll('.te-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+}
+
+async function edLoadSavedTransform(cosmeticId, slot) {
+  try {
+    const res = await fetch(`/v1/admin/cosmetics/transforms/${cosmeticId}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const t = data.transforms?.[slot];
+    if (t) {
+      const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+      setVal('te-tx', t.translation_x.toFixed(2));
+      setVal('te-ty', t.translation_y.toFixed(2));
+      setVal('te-tz', t.translation_z.toFixed(2));
+      setVal('te-rx', t.rotation_x.toFixed(1));
+      setVal('te-ry', t.rotation_y.toFixed(1));
+      setVal('te-rz', t.rotation_z.toFixed(1));
+      setVal('te-sx', t.scale_x.toFixed(3));
+      setVal('te-sy', t.scale_y.toFixed(3));
+      setVal('te-sz', t.scale_z.toFixed(3));
+    }
+  } catch (e) { console.debug('Load transform failed', e); }
+}
+
+function edApplyTransformFromInputs() {
+  if (!edCosmeticMesh) return;
+  const getVal = (id, def) => { const el = document.getElementById(id); return el ? parseFloat(el.value) || def : def; };
+  const m = edCosmeticMesh;
+  // Convert from 0-16 space to -1..1 space
+  m.position.set(
+    getVal('te-tx', 0) / 8 - 1,
+    getVal('te-ty', 8) / 8 - 1,
+    getVal('te-tz', 0) / 8 - 1
+  );
+  m.rotation.set(
+    THREE.MathUtils.degToRad(getVal('te-rx', 0)),
+    THREE.MathUtils.degToRad(getVal('te-ry', 0)),
+    THREE.MathUtils.degToRad(getVal('te-rz', 0))
+  );
+  m.scale.set(getVal('te-sx', 1), getVal('te-sy', 1), getVal('te-sz', 1));
+}
+
+async function edSaveTransform() {
+  const cosmeticId = edCurrentCosmeticId;
+  if (!cosmeticId) return;
+  const slot = document.getElementById('te-slot').value;
+  const getVal = (id, def) => { const el = document.getElementById(id); return el ? parseFloat(el.value) || def : def; };
+  const transform = {
+    translation: [getVal('te-tx', 0), getVal('te-ty', 0), getVal('te-tz', 0)],
+    rotation: [getVal('te-rx', 0), getVal('te-ry', 0), getVal('te-rz', 0)],
+    scale: [getVal('te-sx', 1), getVal('te-sy', 1), getVal('te-sz', 1)]
+  };
+  try {
+    const res = await fetch(`/v1/admin/cosmetics/transforms/${cosmeticId}`, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slot, transform })
+    });
+    if (res.ok) {
+      if (typeof status === 'function') status('Transform guardo', true);
+    } else {
+      const d = await res.json();
+      if (typeof status === 'function') status(d.error || 'Error', false);
+    }
+  } catch (e) {
+    if (typeof status === 'function') status('Error de red', false);
+  }
+}
+
+function edResetTransform() {
+  if (!edCosmeticMesh) return;
+  const m = edCosmeticMesh;
+  m.position.set(0, 0, 0);
+  m.rotation.set(0, 0, 0);
+  m.scale.set(1, 1, 1);
+  edOnTransformChange();
+}
+
+function edAnimate() {
+  if (edAnimId) cancelAnimationFrame(edAnimId);
+  function loop() {
+    edAnimId = requestAnimationFrame(loop);
+    edRenderer.render(edScene, edCamera);
+  }
+  loop();
+}
+
+function edCleanup() {
+  if (edAnimId) { cancelAnimationFrame(edAnimId); edAnimId = null; }
+  if (edControls) { edControls.detach(); }
+}
+
+// ── Public API (exposed to global scope) ──
+async function openTransformEditor() {
+  const id = document.getElementById('res-cos').value;
+  if (!id) { if (typeof status === 'function') status('Selecciona un cosmético', false); return; }
+  edCurrentCosmeticId = id;
+  edInit();
+  const editorEl = document.getElementById('transform-editor');
+  editorEl.classList.remove('hidden');
+  document.getElementById('preview-controls').classList.add('hidden');
+  // Expand preview stage
+  document.getElementById('preview-stage').style.height = '520px';
+
+  // Build editor HTML
+  const slot = document.getElementById('cos-slot')?.value || 'HAT';
+  const defaultSlot = (slot === 'HAT') ? 'head' : (slot === 'BACKPACK') ? 'backpack' : 'head';
+  editorEl.innerHTML = `
+    <div class="te-row">
+      <label>Slot:</label>
+      <select id="te-slot">
+        <option value="head"${defaultSlot==='head'?' selected':''}>Cabeza</option>
+        <option value="backpack"${defaultSlot==='backpack'?' selected':''}>Mochila</option>
+      </select>
+      <div style="flex:1"></div>
+      <button class="te-mode-btn active" data-mode="translate" onclick="window._edSetMode('translate')">Mover (W)</button>
+      <button class="te-mode-btn" data-mode="rotate" onclick="window._edSetMode('rotate')">Rotar (E)</button>
+      <button class="te-mode-btn" data-mode="scale" onclick="window._edSetMode('scale')">Escalar (R)</button>
+    </div>
+    <div class="te-row">
+      <div class="te-group">
+        <div class="te-group-title">Posición</div>
+        <div class="te-xyz">
+          <span class="x">X</span><input type="number" id="te-tx" step="0.5" value="0" onchange="window._edApplyTransform()">
+          <span class="y">Y</span><input type="number" id="te-ty" step="0.5" value="0" onchange="window._edApplyTransform()">
+          <span class="z">Z</span><input type="number" id="te-tz" step="0.5" value="0" onchange="window._edApplyTransform()">
+        </div>
+      </div>
+      <div class="te-group">
+        <div class="te-group-title">Rotación°</div>
+        <div class="te-xyz">
+          <span class="x">X</span><input type="number" id="te-rx" step="15" value="0" onchange="window._edApplyTransform()">
+          <span class="y">Y</span><input type="number" id="te-ry" step="15" value="0" onchange="window._edApplyTransform()">
+          <span class="z">Z</span><input type="number" id="te-rz" step="15" value="0" onchange="window._edApplyTransform()">
+        </div>
+      </div>
+      <div class="te-group">
+        <div class="te-group-title">Escala</div>
+        <div class="te-xyz">
+          <span class="x">X</span><input type="number" id="te-sx" step="0.1" value="1" onchange="window._edApplyTransform()">
+          <span class="y">Y</span><input type="number" id="te-sy" step="0.1" value="1" onchange="window._edApplyTransform()">
+          <span class="z">Z</span><input type="number" id="te-sz" step="0.1" value="1" onchange="window._edApplyTransform()">
+        </div>
+      </div>
+    </div>
+    <div class="te-row te-actions">
+      <button class="btn" onclick="window._edSave()">💾 Guardar</button>
+      <button class="btn btn-secondary" onclick="window._edReset()">↺ Reset</button>
+      <button class="btn btn-secondary" onclick="window._edClose()">✕ Cerrar</button>
+    </div>
+  `;
+
+  // Load model and transforms
+  await edLoadCosmeticModel(id);
+  await edLoadSavedTransform(id, defaultSlot);
+  edApplyTransformFromInputs();
+  edAttachControls();
+
+  // Slot change handler
+  document.getElementById('te-slot').addEventListener('change', async (e) => {
+    await edLoadSavedTransform(edCurrentCosmeticId, e.target.value);
+    edApplyTransformFromInputs();
+  });
+}
+
+// Expose functions to global scope (for onclick handlers)
+window._edSetMode = edSetMode;
+window._edApplyTransform = edApplyTransformFromInputs;
+window._edSave = edSaveTransform;
+window._edReset = edResetTransform;
+window._edClose = function() {
+  edCleanup();
+  document.getElementById('transform-editor').classList.add('hidden');
+  document.getElementById('preview-controls').classList.remove('hidden');
+  document.getElementById('preview-stage').style.height = '';
+};
+window.openTransformEditor = openTransformEditor;
 </script>
 </body>
 </html>

@@ -71,6 +71,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS admins(username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, password_salt TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'admin', created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS resources(cosmetic_id TEXT PRIMARY KEY REFERENCES cosmetics(id), file_path TEXT NOT NULL, sha256 TEXT NOT NULL, file_size INTEGER NOT NULL, content_type TEXT NOT NULL, uploaded_at INTEGER NOT NULL, model_path TEXT, model_sha256 TEXT, model_size INTEGER);
       CREATE TABLE IF NOT EXISTS resource_files(cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id), name TEXT NOT NULL, file_path TEXT NOT NULL, sha256 TEXT NOT NULL, file_size INTEGER NOT NULL, mcmeta_path TEXT, mcmeta_size INTEGER, uploaded_at INTEGER NOT NULL, PRIMARY KEY(cosmetic_id, name));
+      CREATE TABLE IF NOT EXISTS cosmetic_transforms(cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id), slot TEXT NOT NULL CHECK(slot IN ('head','backpack')), translation_x REAL DEFAULT 0, translation_y REAL DEFAULT 0, translation_z REAL DEFAULT 0, rotation_x REAL DEFAULT 0, rotation_y REAL DEFAULT 0, rotation_z REAL DEFAULT 0, scale_x REAL DEFAULT 1, scale_y REAL DEFAULT 1, scale_z REAL DEFAULT 1, updated_at INTEGER, PRIMARY KEY(cosmetic_id, slot));
       `);
     // Migration: ensure model columns exist (for databases that may have incomplete migration)
     const columns = this.db.prepare("PRAGMA table_info(resources)").all().map(c => c.name);
@@ -335,5 +336,56 @@ export class Store {
     this.db.prepare('UPDATE resource_files SET mcmeta_path=NULL, mcmeta_size=NULL WHERE cosmetic_id=? AND name=?')
       .run(cosmeticId(id), name);
     return this.getResourceFile(id, name);
+  }
+
+  // ── Cosmetic transforms (position/rotation/scale per slot) ─────────
+
+  getTransforms(id) {
+    id = cosmeticId(id);
+    const rows = this.db.prepare('SELECT * FROM cosmetic_transforms WHERE cosmetic_id=?').all(id);
+    const result = {};
+    for (const row of rows) {
+      result[row.slot] = {
+        translation: [row.translation_x, row.translation_y, row.translation_z],
+        rotation: [row.rotation_x, row.rotation_y, row.rotation_z],
+        scale: [row.scale_x, row.scale_y, row.scale_z],
+        updatedAt: row.updated_at
+      };
+    }
+    return result;
+  }
+
+  saveTransform(id, slot, transform, actor) {
+    id = cosmeticId(id);
+    this.cosmetic(id); // verify exists
+    requireThat(['head', 'backpack'].includes(slot), 'Slot inválido (debe ser head o backpack)');
+    requireThat(transform && typeof transform === 'object', 'Transform inválido');
+    const t = Array.isArray(transform.translation) ? transform.translation : [0, 0, 0];
+    const r = Array.isArray(transform.rotation) ? transform.rotation : [0, 0, 0];
+    const s = Array.isArray(transform.scale) ? transform.scale : [1, 1, 1];
+    requireThat(t.length === 3 && r.length === 3 && s.length === 3, 'Transform debe tener 3 valores por eje');
+    for (const v of [...t, ...r, ...s]) requireThat(Number.isFinite(v), 'Valores de transform deben ser números finitos');
+    this.db.prepare(`INSERT INTO cosmetic_transforms(cosmetic_id, slot, translation_x, translation_y, translation_z, rotation_x, rotation_y, rotation_z, scale_x, scale_y, scale_z, updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(cosmetic_id, slot) DO UPDATE SET
+      translation_x=excluded.translation_x, translation_y=excluded.translation_y, translation_z=excluded.translation_z,
+      rotation_x=excluded.rotation_x, rotation_y=excluded.rotation_y, rotation_z=excluded.rotation_z,
+      scale_x=excluded.scale_x, scale_y=excluded.scale_y, scale_z=excluded.scale_z, updated_at=excluded.updated_at`)
+      .run(id, slot, t[0], t[1], t[2], r[0], r[1], r[2], s[0], s[1], s[2], Date.now());
+    this.audit(actor, 'transform.save', { id, slot, transform: { translation: t, rotation: r, scale: s } });
+    return this.getTransforms(id);
+  }
+
+  getAllTransforms() {
+    const rows = this.db.prepare('SELECT cosmetic_id, slot, translation_x, translation_y, translation_z, rotation_x, rotation_y, rotation_z, scale_x, scale_y, scale_z FROM cosmetic_transforms').all();
+    const result = {};
+    for (const row of rows) {
+      if (!result[row.cosmetic_id]) result[row.cosmetic_id] = {};
+      result[row.cosmetic_id][row.slot] = {
+        translation: [row.translation_x, row.translation_y, row.translation_z],
+        rotation: [row.rotation_x, row.rotation_y, row.rotation_z],
+        scale: [row.scale_x, row.scale_y, row.scale_z]
+      };
+    }
+    return result;
   }
 }

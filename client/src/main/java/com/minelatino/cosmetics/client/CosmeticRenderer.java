@@ -104,7 +104,7 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
 
             CosmeticModel model = res.model();
             if (model != null && !model.elements.isEmpty()) {
-                renderModel(poseStack, bufferSource, packedLight, renderState, res, model, item.slot());
+                renderModel(poseStack, bufferSource, packedLight, renderState, res, model, item.slot(), item.cosmeticId());
                 if(!model.quads.isEmpty()) submitted++;
             } else {
                 renderFallback(poseStack, bufferSource, packedLight, renderState, res.texture(), item.slot());
@@ -124,7 +124,7 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
 
     /** Renders a 3D model attached to the player. */
     private void renderModel(PoseStack poseStack, MultiBufferSource bufferSource, int packedLight,
-                             PlayerRenderState state, ResourceCache.CachedResource resource, CosmeticModel model, String slot) {
+                             PlayerRenderState state, ResourceCache.CachedResource resource, CosmeticModel model, String slot, String cosmeticId) {
 
         poseStack.pushPose();
         try {
@@ -132,13 +132,18 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
             if ("HAT".equals(slot)) {
                 getParentModel().head.translateAndRotate(poseStack);
                 CustomHeadLayer.translateToHead(poseStack, CustomHeadLayer.Transforms.DEFAULT);
-                CosmeticModel.DisplayTransform head = model.head;
-                poseStack.translate(head.translation()[0]/16, head.translation()[1]/16, head.translation()[2]/16);
-                poseStack.mulPose(new Quaternionf().rotationXYZ(
-                        (float)Math.toRadians(head.rotation()[0]),
-                        (float)Math.toRadians(head.rotation()[1]),
-                        (float)Math.toRadians(head.rotation()[2])));
-                poseStack.scale(head.scale()[0], head.scale()[1], head.scale()[2]);
+                ApiClient.TransformData serverHead = CosmeticsClient.instance().getTransform(cosmeticId, "head");
+                if (serverHead != null) {
+                    applyDisplayTransform(poseStack, serverHead);
+                } else {
+                    CosmeticModel.DisplayTransform head = model.head;
+                    poseStack.translate(head.translation()[0]/16, head.translation()[1]/16, head.translation()[2]/16);
+                    poseStack.mulPose(new Quaternionf().rotationXYZ(
+                            (float)Math.toRadians(head.rotation()[0]),
+                            (float)Math.toRadians(head.rotation()[1]),
+                            (float)Math.toRadians(head.rotation()[2])));
+                    poseStack.scale(head.scale()[0], head.scale()[1], head.scale()[2]);
+                }
             } else if ("PET".equals(slot)) {
                 // Companion beside the player's feet, not attached to the animated head/body.
                 poseStack.translate(0.8, 1.0 + Math.sin(state.ageInTicks * 0.08) * 0.035, 0);
@@ -149,10 +154,15 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
                 // Java element models use Y-up; player ModelPart coordinates use Y-down.
                 poseStack.scale(1, -1, -1);
                 if ("BACKPACK".equals(slot)) {
-                    var b = model.backpack;
-                    poseStack.translate(b.translation()[0]/16,b.translation()[1]/16,b.translation()[2]/16);
-                    poseStack.mulPose(new Quaternionf().rotationXYZ((float)Math.toRadians(b.rotation()[0]),(float)Math.toRadians(b.rotation()[1]),(float)Math.toRadians(b.rotation()[2])));
-                    poseStack.scale(b.scale()[0],b.scale()[1],b.scale()[2]);
+                    ApiClient.TransformData serverBackpack = CosmeticsClient.instance().getTransform(cosmeticId, "backpack");
+                    if (serverBackpack != null) {
+                        applyDisplayTransform(poseStack, serverBackpack);
+                    } else {
+                        var b = model.backpack;
+                        poseStack.translate(b.translation()[0]/16,b.translation()[1]/16,b.translation()[2]/16);
+                        poseStack.mulPose(new Quaternionf().rotationXYZ((float)Math.toRadians(b.rotation()[0]),(float)Math.toRadians(b.rotation()[1]),(float)Math.toRadians(b.rotation()[2])));
+                        poseStack.scale(b.scale()[0],b.scale()[1],b.scale()[2]);
+                    }
                 }
             }
             for (CosmeticModel.Quad quad : model.quads) {
@@ -170,6 +180,16 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
         } finally {
             poseStack.popPose();
         }
+    }
+
+    /** Applies a server-side transform (translation in 0-16 space, rotation in degrees, scale). */
+    private static void applyDisplayTransform(PoseStack poseStack, ApiClient.TransformData t) {
+        poseStack.translate(t.translation()[0]/16, t.translation()[1]/16, t.translation()[2]/16);
+        poseStack.mulPose(new Quaternionf().rotationXYZ(
+                (float)Math.toRadians(t.rotation()[0]),
+                (float)Math.toRadians(t.rotation()[1]),
+                (float)Math.toRadians(t.rotation()[2])));
+        poseStack.scale(t.scale()[0], t.scale()[1], t.scale()[2]);
     }
 
     /** Renders a single quad from a CosmeticModel. */

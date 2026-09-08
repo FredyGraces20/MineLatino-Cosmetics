@@ -147,6 +147,17 @@ public final class ApiClient implements WardrobeController.Gateway {
         return GSON.fromJson(response.body(), PauseMenuConfigResponse.class);
     }
 
+    // ── Cosmetic Transforms ────────────────────────────────────────────
+
+    public record TransformData(float[] translation, float[] rotation, float[] scale) {}
+    public record CosmeticTransformsResponse(Map<String, Map<String, TransformData>> transforms) {}
+
+    public CosmeticTransformsResponse cosmeticTransforms() throws Exception {
+        HttpResponse<String> response = get("/v1/client-config/cosmetic-transforms", null);
+        if (response.statusCode() != 200) throw new ApiException(response.statusCode(), "cosmetic-transforms");
+        return GSON.fromJson(response.body(), CosmeticTransformsResponse.class);
+    }
+
     // ── HTTP primitives ───────────────────────────────────────────────
 
     private HttpResponse<String> get(String path, String token) throws Exception {

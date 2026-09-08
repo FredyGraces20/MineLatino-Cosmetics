@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
@@ -31,6 +32,12 @@ public final class CosmeticsClient {
     private final WardrobeController wardrobe;
     private long lastEquipmentRefresh = 0;
     private static final long EQUIPMENT_REFRESH_INTERVAL = 30_000; // 30 seconds
+
+    /** Server-side cosmetic transform overrides (cosmeticId -> slot -> transform). */
+    private volatile Map<String, Map<String, ApiClient.TransformData>> transforms = Map.of();
+    private long lastTransformRefresh = 0;
+    private static final long TRANSFORM_REFRESH_INTERVAL = 60_000; // 60 seconds
+    private volatile boolean transformsRefreshing = false;
 
     /** Tracks whether an async equipment refresh is in progress. */
     private volatile boolean refreshing = false;
@@ -93,6 +100,9 @@ public final class CosmeticsClient {
             }
         }
 
+        // Periodic transform refresh (async, non-blocking)
+        refreshTransformsIfNeeded();
+
         // Periodic equipment refresh (async, non-blocking)
         // Appearance is public: spectators with the mod need no wardrobe session.
         long now = System.currentTimeMillis();
@@ -127,6 +137,40 @@ public final class CosmeticsClient {
     public EquipmentCache equipment() { return equipment; }
     public ResourceCache resources() { return resources; }
     public WardrobeController wardrobe() { return wardrobe; }
+
+    /**
+     * Get the server-side transform override for a cosmetic slot.
+     * Returns null if no override exists.
+     */
+    public ApiClient.TransformData getTransform(String cosmeticId, String slot) {
+        Map<String, ApiClient.TransformData> slotTransforms = transforms.get(cosmeticId);
+        if (slotTransforms == null) return null;
+        return slotTransforms.get(slot);
+    }
+
+    /**
+     * Refresh transforms from the server if enough time has passed.
+     * Called from tick() to keep transforms up to date.
+     */
+    public void refreshTransformsIfNeeded() {
+        long now = System.currentTimeMillis();
+        if (now - lastTransformRefresh < TRANSFORM_REFRESH_INTERVAL) return;
+        if (transformsRefreshing) return;
+        transformsRefreshing = true;
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            try {
+                ApiClient.CosmeticTransformsResponse response = api.cosmeticTransforms();
+                if (response != null && response.transforms() != null) {
+                    transforms = response.transforms();
+                }
+                lastTransformRefresh = now;
+            } catch (Exception e) {
+                LOG.debug("Transform refresh failed", e);
+            } finally {
+                transformsRefreshing = false;
+            }
+        });
+    }
 
     /** Capture on the game thread; file writing is performed by the UI off-thread. */
     public String diagnosticReport() {

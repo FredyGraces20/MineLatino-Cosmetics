@@ -461,6 +461,20 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
         if (method === 'PUT' && path === '/v1/admin/pause-menu') return json(store.saveMenu(await body(request), actor));
         if (method === 'GET' && path === '/v1/admin/pause-menu/history') return json({ items: store.menuHistory(offset(url)) });
         if (method === 'POST' && path === '/v1/admin/pause-menu/restore') return json(store.restoreMenu(await body(request), actor));
+
+        // ── Cosmetic transforms (position/rotation/scale per slot) ────
+        const transformsMatch = path.match(/^\/v1\/admin\/cosmetics\/transforms\/([a-z0-9_-]+)$/);
+        if (method === 'GET' && transformsMatch) {
+          const id = cosmeticId(transformsMatch[1]);
+          store.cosmetic(id);
+          return json({ transforms: store.getTransforms(id) });
+        }
+        if (method === 'PUT' && transformsMatch) {
+          const id = cosmeticId(transformsMatch[1]);
+          const input = await body(request);
+          requireThat(input.slot && input.transform, 'Slot y transform requeridos');
+          return json({ transforms: store.saveTransform(id, input.slot, input.transform, actor) });
+        }
       }
 
       // ── Public routes ───────────────────────────────────────────────────
@@ -470,6 +484,7 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
         return json({ items });
       }
       if (method === 'GET' && path === '/v1/client-config/pause-menu') return json(store.menu());
+      if (method === 'GET' && path === '/v1/client-config/cosmetic-transforms') return json({ transforms: store.getAllTransforms() });
       if (method === 'GET' && path === '/v1/cosmetics/appearance') {
         const ids = [...new Set((url.searchParams.get('uuids') ?? '').split(',').map(uuid))];
         requireThat(ids.length <= 50, 'Máximo 50 jugadores');
