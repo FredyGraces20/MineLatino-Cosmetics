@@ -239,6 +239,20 @@ test('restoring a menu creates a new revision and preserves history', async t =>
   assert.equal(store.menuHistory().length, 3);
   assert.equal(store.menuHistory()[1].config.enabled, false);
 });
+test('menu history deletion requires admin and cannot remove the current revision', async t => {
+  const { store, request } = fixture(t);
+  store.saveMenu({ expectedRevision: 0, config: DEFAULT_MENU }, 'admin');
+  store.saveMenu({ expectedRevision: 1, config: DEFAULT_MENU }, 'admin');
+  const path = '/v1/admin/pause-menu/history/';
+  assert.equal((await request(path + '1', { method: 'DELETE' })).status, 401);
+  assert.equal((await request(path + '2', { method: 'DELETE', token: ADMIN })).status, 409);
+  assert.equal((await request(path + 'invalid', { method: 'DELETE', token: ADMIN })).status, 400);
+  assert.equal((await request(path + '1', { method: 'DELETE', token: ADMIN })).status, 200);
+  assert.equal((await request(path + '1', { method: 'DELETE', token: ADMIN })).status, 404);
+  assert.equal(store.menu().revision, 2);
+  assert.equal(store.menuHistory().length, 1);
+});
+
 test('Mojang adapter uses a fixed origin, rejects redirects, and validates the response', async t => {
   let called;
   t.mock.method(globalThis, 'fetch', async (url, options) => {

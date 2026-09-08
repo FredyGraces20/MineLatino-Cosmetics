@@ -28,7 +28,7 @@ for (const name of ['heart_of_the_sea_texture','heart_of_the_sea_animation2']) {
 const meta = copy(join(root,'textures',pack,'heart_of_the_sea_animation2.png.mcmeta'),'animation.mcmeta');
 store.saveResourceFileMcmeta('heart-of-sea-preview','heart_of_the_sea_animation2','animation.mcmeta',meta.size);
 const origin = 'http://127.0.0.1:8788';
-const server = createHttpServer(createApi({ store, resourceDir: dir, origin, adminToken: createHash('sha256').update(dir).digest('hex') }),origin);
+const server = createHttpServer(createApi({ store, resourceDir: dir, origin, adminToken: createHash('sha256').update(dir).digest('hex') }),origin,resolve('service/public'));
 server.listen(8788,'127.0.0.1',()=>console.log('Heart of Sea preview fixture: '+origin));
 function close() {
   server.close(()=>{

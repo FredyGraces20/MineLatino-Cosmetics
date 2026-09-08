@@ -1,6 +1,6 @@
 allprojects {
     group = 'com.minelatino.cosmetics'
-    version = '0.1.0-alpha.7'
+    version = '0.1.0-alpha.8'
     repositories { mavenCentral() }
 }
 subprojects {
@@ -8,4 +8,32 @@ subprojects {
     java.toolchain.languageVersion = JavaLanguageVersion.of(21)
     tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8'; options.release = 21 }
     tasks.withType(Test).configureEach { useJUnitPlatform() }
+}
+
+// Auto-copy JARs to local Minecraft instance after build
+def instanceModsDir = file("E:/.minecraftx/instances/Minecraft 1.21.4 fabric/mods")
+
+task deployToLocal(dependsOn: [':fabric:build']) {
+    group = 'deployment'
+    description = 'Copies the Fabric JAR to the local Fabric instance (never installs Forge there)'
+    doLast {
+        def modPrefix = "minelatino-cosmetics-fabric-"
+        def mcVersion = project.findProperty('mcVersion') ?: '1.21.4'
+        if (mcVersion != '1.21.4') throw new GradleException('This local instance is Minecraft 1.21.4 only')
+        def fabricJar = file("${project(':fabric').layout.buildDirectory.get().asFile}/libs/minelatino-cosmetics-fabric-${mcVersion}-${version}.jar")
+        if (!fabricJar.isFile()) throw new GradleException('Fabric JAR missing; existing mods were not changed')
+        instanceModsDir.mkdirs()
+        // Delete old cosmetic JARs from instance mods folder
+        if (instanceModsDir.exists()) {
+            instanceModsDir.eachFileMatch(~/^${modPrefix}.*\.jar$/) { old ->
+                old.delete()
+                println "Removed old: ${old.name}"
+            }
+        }
+        // Copy new Fabric JAR
+        if (fabricJar.exists()) {
+            java.nio.file.Files.copy(fabricJar.toPath(), new File(instanceModsDir, fabricJar.name).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            println "Deployed: ${fabricJar.name} -> ${instanceModsDir}"
+        }
+    }
 }

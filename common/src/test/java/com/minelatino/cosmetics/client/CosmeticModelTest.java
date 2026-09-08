@@ -83,4 +83,22 @@ class CosmeticModelTest {
         var edge=CosmeticModel.parse(cube("up","", "").replace("[16,16,16]","[16,16,0]"));
         assertTrue(edge.quads.isEmpty());
     }
+
+    @Test void textureSizeMetadataDoesNotChangeJavaUvUnits() {
+        String json="{\"texture_size\":[128,128],\"elements\":[{\"from\":[0,0,0],\"to\":[16,16,16],\"faces\":{\"north\":{\"uv\":[0,14.125,16,30.125]}}}]}";
+        var model=CosmeticModel.parse(json);
+        var q=model.quads.getFirst();
+        assertEquals(0f, q.v0()[3], 0.00001f);
+        assertEquals(14.125f/16, q.v0()[4], 0.00001f);
+        assertEquals(30.125f/16, q.v1()[4], 0.00001f);
+        assertEquals(1f, q.v2()[3], 0.00001f);
+        assertEquals(128, model.textureWidth);
+        assertEquals(128, model.textureHeight);
+    }
+
+    @Test void defaultTextureSizeIs16x16() {
+        var model=CosmeticModel.parse(cube("north","", ""));
+        assertEquals(16, model.textureWidth);
+        assertEquals(16, model.textureHeight);
+    }
 }

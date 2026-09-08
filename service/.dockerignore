@@ -1,0 +1,9 @@
+# Ship application code only, never local credentials, databases or scratch notes.
+*
+!Dockerfile
+!package.json
+!src/
+!src/*.mjs
+!public/
+!public/*.html
+!public/*.js

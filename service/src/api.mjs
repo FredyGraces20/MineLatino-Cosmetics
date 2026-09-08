@@ -461,6 +461,10 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
         if (method === 'PUT' && path === '/v1/admin/pause-menu') return json(store.saveMenu(await body(request), actor));
         if (method === 'GET' && path === '/v1/admin/pause-menu/history') return json({ items: store.menuHistory(offset(url)) });
         if (method === 'POST' && path === '/v1/admin/pause-menu/restore') return json(store.restoreMenu(await body(request), actor));
+        if (method === 'DELETE' && path.startsWith('/v1/admin/pause-menu/history/')) {
+          const rev = Number(path.slice('/v1/admin/pause-menu/history/'.length));
+          return json(store.deleteMenuEntry({ revision: rev }, actor));
+        }
 
         // ── Cosmetic transforms (position/rotation/scale per slot) ────
         const transformsMatch = path.match(/^\/v1\/admin\/cosmetics\/transforms\/([a-z0-9_-]+)$/);

@@ -12,16 +12,20 @@ public final class CosmeticModel {
     public final List<Quad> quads;
     public final DisplayTransform head;
     public final DisplayTransform backpack;
+    public final int textureWidth;
+    public final int textureHeight;
 
-    private CosmeticModel(List<ModelElement> elements, DisplayTransform head, DisplayTransform backpack) {
+    private CosmeticModel(List<ModelElement> elements, DisplayTransform head, DisplayTransform backpack, int textureWidth, int textureHeight) {
         this.elements = List.copyOf(elements);
         this.head = head;
         this.backpack = backpack;
-        this.quads = elements.stream().flatMap(e -> generateQuads(e, 0, 0, 0).stream()).toList();
+        this.textureWidth = textureWidth;
+        this.textureHeight = textureHeight;
+        this.quads = elements.stream().flatMap(e -> generateQuads(e, 0, 0, 0, textureWidth, textureHeight).stream()).toList();
     }
 
     public static CosmeticModel empty() {
-        return new CosmeticModel(List.of(), DisplayTransform.identity(), DisplayTransform.identity());
+        return new CosmeticModel(List.of(), DisplayTransform.identity(), DisplayTransform.identity(), 16, 16);
     }
 
     /** Invalid JSON is an error, not a PNG-only cosmetic: keep the last good resource on failure. */
@@ -78,7 +82,14 @@ public final class CosmeticModel {
             JsonObject b = root.getAsJsonObject("display").getAsJsonObject("minelatino_backpack");
             backpack = new DisplayTransform(vector(b,"translation",new float[3],3),vector(b,"rotation",new float[3],3),vector(b,"scale",new float[]{1,1,1},3));
         }
-        return new CosmeticModel(elements, head, backpack);
+        int textureWidth = 16, textureHeight = 16;
+        if (root.has("texture_size")) {
+            JsonArray ts = root.getAsJsonArray("texture_size");
+            if (ts.size() >= 2) { textureWidth = ts.get(0).getAsInt(); textureHeight = ts.get(1).getAsInt(); }
+            if (textureWidth <= 0 || textureHeight <= 0 || textureWidth > 4096 || textureHeight > 4096)
+                throw new IllegalArgumentException("Invalid texture_size");
+        }
+        return new CosmeticModel(elements, head, backpack, textureWidth, textureHeight);
     }
 
     private static float[] vector(JsonObject obj, String key, float[] fallback, int size) {
@@ -118,7 +129,7 @@ public final class CosmeticModel {
     public record ModelFace(String direction, float[] uv, int rotation, String texture) {}
     public record Quad(float[] v0, float[] v1, float[] v2, float[] v3, float[] normal, String texture) {}
 
-    public static List<Quad> generateQuads(ModelElement e, float ox, float oy, float oz) {
+    public static List<Quad> generateQuads(ModelElement e, float ox, float oy, float oz, int texW, int texH) {
         float x1=e.from()[0], y1=e.from()[1], z1=e.from()[2];
         float x2=e.to()[0], y2=e.to()[1], z2=e.to()[2];
         List<Quad> result = new ArrayList<>();
@@ -138,6 +149,7 @@ public final class CosmeticModel {
                 float[] p = positions[i];
                 rotate(p, e.rotation());
                 int uvIndex = (i + face.rotation()/90) % 4;
+                // Java model UVs are in 16-unit coordinates; texture_size is editor metadata.
                 float u = face.uv()[uvIndex < 2 ? 0 : 2] / 16;
                 float v = face.uv()[uvIndex == 0 || uvIndex == 3 ? 1 : 3] / 16;
                 vertices[i] = new float[]{(p[0]-8)/16+ox, (p[1]-8)/16+oy, (p[2]-8)/16+oz, u, v};

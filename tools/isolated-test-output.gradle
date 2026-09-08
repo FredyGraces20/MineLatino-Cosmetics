@@ -1,10 +1,13 @@
-// Optional local workaround for OneDrive locking previous Gradle test result files.
-def diagnosticRun = System.currentTimeMillis().toString()
+// Redirects Gradle build directory to C:/temp/ to avoid OneDrive file locking.
+// Usage: .\gradlew.bat :fabric:build --init-script tools\isolated-test-output.gradle
+def runId = System.currentTimeMillis().toString()
 allprojects {
-    layout.buildDirectory.set(file('build/heart-of-sea-alpha6'))
+    def mcVersion = gradle.startParameter.projectProperties['mcVersion'] ?: '1.21.4'
+    def projectName = project.path.replace(':', '_')
+    layout.buildDirectory.set(file("C:/temp/cosmetics-build-${runId}/${mcVersion}/${projectName}"))
     tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
-        binaryResultsDirectory.set(layout.buildDirectory.dir("isolated-tests/${diagnosticRun}/binary"))
-        reports.junitXml.outputLocation.set(layout.buildDirectory.dir("isolated-tests/${diagnosticRun}/xml"))
-        reports.html.outputLocation.set(layout.buildDirectory.dir("isolated-tests/${diagnosticRun}/html"))
+        binaryResultsDirectory.set(layout.buildDirectory.dir("isolated-tests/${runId}/binary"))
+        reports.junitXml.outputLocation.set(layout.buildDirectory.dir("isolated-tests/${runId}/xml"))
+        reports.html.outputLocation.set(layout.buildDirectory.dir("isolated-tests/${runId}/html"))
     }
 }

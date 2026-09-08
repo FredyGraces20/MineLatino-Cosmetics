@@ -221,6 +221,16 @@ export class Store {
     // Restoration publishes a new revision: never deletes intervening history.
     return this.saveMenu({ expectedRevision: input.expectedRevision, config: JSON.parse(old.config) }, actor);
   }
+  deleteMenuEntry(input, actor) {
+    requireThat(Number.isSafeInteger(input.revision) && input.revision > 0, 'Revisión inválida');
+    const current = this.menu().revision;
+    requireThat(input.revision !== current, 'No se puede eliminar la configuración activa', 409);
+    const row = this.db.prepare('SELECT revision FROM menus WHERE revision=?').get(input.revision);
+    requireThat(row, 'Revisión no encontrada', 404);
+    this.db.prepare('DELETE FROM menus WHERE revision=?').run(input.revision);
+    this.audit(actor, 'menu.delete', { revision: input.revision });
+    return { deleted: input.revision };
+  }
   auditPage(offset = 0) { return this.db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT 50 OFFSET ?').all(offset); }
 
   // ── Admin accounts ──────────────────────────────────────────────────────
