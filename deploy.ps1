@@ -84,8 +84,8 @@ if (-not $SkipGithub) {
             fileSize = $forgeJar.Length
         }
     }
-    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllText("$root\mods.json", (@($mods) | ConvertTo-Json -Depth 5 -Compress), $utf8NoBom)
+    $modsJson = $mods | ConvertTo-Json -Depth 5 -Compress
+    node -e "const fs=require('fs'); const d=JSON.parse(process.argv[1]); const arr=Array.isArray(d)?d:[d]; fs.writeFileSync('mods.json',JSON.stringify(arr));" $modsJson
     Write-Host "mods.json updated" -ForegroundColor Green
 
     # ── 5. Push mods.json ─────────────────────────────────────────────────
