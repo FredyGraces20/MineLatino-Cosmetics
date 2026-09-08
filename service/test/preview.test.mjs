@@ -70,6 +70,8 @@ test('redesigned admin separates catalog, product data and 3D resources', () => 
   assert(html.includes('class="sidebar"'));
   assert(html.includes('href="admin.css"'));
   assert(html.includes('data-tab="resources"'));
+  assert(html.includes("edSlotForType(item?.slot||'BACKPACK')"), '3D editor must use the selected catalog item slot');
+  assert(!html.includes("const cosSlot=$('cos-slot').value"), '3D editor must not use a stale product form slot');
 });
 
 test('editor converts API transforms exactly like the Minecraft renderer', () => {

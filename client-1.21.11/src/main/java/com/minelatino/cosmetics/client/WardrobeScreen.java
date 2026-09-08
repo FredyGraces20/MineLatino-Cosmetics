@@ -49,6 +49,7 @@ public final class WardrobeScreen extends Screen {
         addRenderableWidget(button(width-56,10,48,20,"Cerrar",this::onClose));
         refresh=addRenderableWidget(button(width-128,10,68,20,"Actualizar",()-> {
             controller.reload();
+            client.forceRefreshTransforms();
             if(selectedId!=null) client.resources().retry(selectedId);
         }));
         connect=addRenderableWidget(button(width-200,10,68,20,"Vincular",this::startAuth));

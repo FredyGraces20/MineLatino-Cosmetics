@@ -59,7 +59,7 @@ public final class CosmeticsClient {
                     CosmeticsConfig config = CosmeticsConfig.read(Minecraft.getInstance().gameDirectory.toPath());
                     Path cacheDir = Minecraft.getInstance().gameDirectory.toPath().resolve("cache").resolve("minelatino-cosmetics");
                     instance = new CosmeticsClient(config.backendUrl(), cacheDir);
-                    CosmeticsDiagnostics.event("START","build=alpha.6 minecraft=1.21.4 java="+System.getProperty("java.version"));
+                    CosmeticsDiagnostics.event("START","build=alpha.10 minecraft=1.21.4 java="+System.getProperty("java.version"));
                     LOG.info("Cosmetics backend: {}", config.backendUrl());
                 }
             }
@@ -172,13 +172,19 @@ public final class CosmeticsClient {
         });
     }
 
+    /** Forces the next transform request instead of waiting for the periodic TTL. */
+    public void forceRefreshTransforms() {
+        lastTransformRefresh = 0;
+        refreshTransformsIfNeeded();
+    }
+
     /** Capture on the game thread; file writing is performed by the UI off-thread. */
     public String diagnosticReport() {
         Minecraft mc=Minecraft.getInstance();
         Session s=auth.session();
         String server=mc.player==null ? "none" : WardrobeController.normalize(mc.player.getUUID().toString());
         String owner=s==null ? "none" : WardrobeController.normalize(s.uuid());
-        String state="build=alpha.6 minecraft=1.21.4\naccountUuid="+mc.getUser().getProfileId()+
+        String state="build=alpha.10 minecraft=1.21.4\naccountUuid="+mc.getUser().getProfileId()+
                 "\nserverUuid="+server+"\nsessionUuid="+owner+"\nauth="+auth.state()+
                 "\nsessionValid="+auth.isConnected()+"\nwardrobe="+wardrobe.snapshot().phase()+
                 "\nowned="+wardrobe.snapshot().owned().size()+"\nconfirmed="+wardrobe.snapshot().equipped()+
@@ -186,6 +192,8 @@ public final class CosmeticsClient {
                 "\nsessionCache="+(s==null ? "none" : equipment.get(owner))+
                 "\nidentityMismatch="+(!server.equals("none") && !owner.equals("none") && !server.equals(owner))+
                 "\nworldLoaded="+(mc.level!=null)+"\nrefreshInProgress="+refreshing+
+                "\ntransformRefreshInProgress="+transformsRefreshing+"\ntransformCosmetics="+transforms.size()+
+                "\ntransformAgeMs="+(lastTransformRefresh==0 ? "never" : Math.max(0,System.currentTimeMillis()-lastTransformRefresh))+
                 "\nplayerInvisible="+(mc.player!=null && mc.player.isInvisible())+
                 "\nplayerSpectator="+(mc.player!=null && mc.player.isSpectator())+
                 "\nNota: UUID distintos requieren vinculación verificada para otros clientes.";
