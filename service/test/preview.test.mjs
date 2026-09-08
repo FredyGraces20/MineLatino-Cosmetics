@@ -63,6 +63,15 @@ test('admin inline scripts remain syntactically valid', () => {
   assert(!html.includes('parseBlockbenchModel('));
 });
 
+test('redesigned admin separates catalog, product data and 3D resources', () => {
+  const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  for (const id of ['tab-catalog', 'tab-details', 'tab-resources', 'tab-grant', 'tab-players', 'tab-menu', 'tab-audit'])
+    assert.equal([...html.matchAll(new RegExp(`id="${id}"`, 'g'))].length, 1, `${id} must be unique`);
+  assert(html.includes('class="sidebar"'));
+  assert(html.includes('href="admin.css"'));
+  assert(html.includes('data-tab="resources"'));
+});
+
 test('editor converts API transforms exactly like the Minecraft renderer', () => {
   const api = editor();
   const source = { translation: [8, 16, -4], rotation: [15, 30, -45], scale: [2, 1.5, .75] };
