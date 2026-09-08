@@ -121,7 +121,9 @@ async function loadAdminMesh(id, signal) {
   const product = { id, resourceVersion: Date.now().toString() };
   const res = await fetch('/v1/resources/'+encodeURIComponent(id)+'?type=model&v='+product.resourceVersion, { signal });
   if (!res.ok) throw new Error('No se pudo descargar el modelo');
-  const mesh = await MineLatinoCosmetics.createCosmeticMesh(product, await res.json(), signal);
+  const model = await res.json();
+  const mesh = await MineLatinoCosmetics.createCosmeticMesh(product, model, signal);
+  mesh.userData.modelDisplay = model.display || {};
   return mesh;
 }
 let pvRequest = 0, edRequest = 0;
@@ -222,6 +224,7 @@ function edView(side){if(side==='front')edOrbit.theta=Math.PI;else if(side==='si
 async function edLoadTransform(cosId,slot){edSetFields(edMath.neutralTransform());try{const r=await fetch('/v1/admin/cosmetics/transforms/'+cosId,{headers:{Authorization:'Bearer '+token}});if(!r.ok)throw new Error('No se pudo cargar la posición');const d=await r.json(),t=d.transforms?.[slot];if(t)edSetFields(t)}catch(e){edNotice(e.message,'err')}}
 async function edSave(){if(!edCosId)return;const slot=$('ed-slot').value,transform=edFields();try{const r=await fetch('/v1/admin/cosmetics/transforms/'+edCosId,{method:'PUT',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({slot,transform})});if(r.ok){edNotice('Posición guardada','ok');status('Transform guardado',true)}else{const d=await r.json();edNotice(d.error||'Error al guardar','err')}}catch(e){edNotice('Error de red','err')}}
 function edReset(){edSetFields(edMath.neutralTransform());edApplyToMesh();edNotice('Valores neutrales; pulsa Guardar para aplicarlos')}
+function edUseModelDefaults(){if(!edCosMesh)return;const slot=$('ed-slot').value,key=slot==='head'?'head':'minelatino_backpack',preset=edCosMesh.userData.modelDisplay?.[key];if(!preset)return edNotice('El JSON no contiene valores para este slot','err');edSetFields({translation:preset.translation,rotation:preset.rotation,scale:preset.scale});edApplyToMesh();edNotice('Valores de Blockbench cargados; pulsa Guardar','ok')}
 function edStartLoop(){if(edAnimFrame)cancelAnimationFrame(edAnimFrame);(function loop(){edAnimFrame=requestAnimationFrame(loop);edCamUpdate();edRenderer.render(edScene,edCam)})()}
 function edSlotForType(slot){return(slot==='HAT'||slot==='PET')?'head':'backpack'}
 function edBuildControls(defaultSlot){
@@ -252,6 +255,7 @@ function edBuildControls(defaultSlot){
 </div>
 <div class="ed-actions">
   <button class="btn" onclick="edSave()" style="flex:1">💾 Guardar</button>
+  <button class="btn btn-gh" onclick="edUseModelDefaults()">Usar Blockbench</button>
   <button class="btn btn-gh" onclick="edReset()">Valores neutrales</button>
   <button class="btn btn-gh" onclick="edFitView();edStartLoop()">Centrar</button>
 </div>`;
@@ -260,7 +264,7 @@ function edBuildControls(defaultSlot){
 async function openEditor(){const id=$('res-cos').value;if(!id)return status('Selecciona un cosm\u00e9tico primero en Recursos',false);edCosId=id;const item=catItems.find(i=>i.id===id),cosName=item?.name||id;$('ed-cos-name').textContent=cosName;try{edInitCanvas()}catch(e){return status('Editor 3D no disponible: '+e.message,false)}const defaultSlot=edSlotForType(item?.slot||'BACKPACK');edBuildControls(defaultSlot);$('ed-overlay').classList.remove('hidden');$('preview-ct').classList.add('hidden');document.body.style.overflow='hidden';requestAnimationFrame(()=>{const c=$('ed-canvas-box').querySelector('canvas');if(c&&edRenderer){const rc=c.getBoundingClientRect();edRenderer.setSize(rc.width,rc.height,false);edCam.aspect=rc.width/rc.height;edCam.updateProjectionMatrix()}edLoadMeshAndTransform(id,defaultSlot)})}
 async function edLoadMeshAndTransform(cosId,slot){edApplySlot(slot);await edLoadCosmetic(cosId);await edLoadTransform(cosId,slot);edApplyToMesh();if(edCosMesh){edTC.attach(edTransform);edFitView()}edStartLoop()}
 function closeEditor(){edRequest++;if(edAnimFrame){cancelAnimationFrame(edAnimFrame);edAnimFrame=null}if(edTC)edTC.detach();$('ed-overlay').classList.add('hidden');$('preview-ct').classList.remove('hidden');document.body.style.overflow=''}
-window.openEditor=openEditor;window.closeEditor=closeEditor;window.edSetMode=edSetMode;window.edApplyToMesh=edApplyToMesh;window.edSave=edSave;window.edReset=edReset;window.edView=edView;
+window.openEditor=openEditor;window.closeEditor=closeEditor;window.edSetMode=edSetMode;window.edApplyToMesh=edApplyToMesh;window.edSave=edSave;window.edReset=edReset;window.edUseModelDefaults=edUseModelDefaults;window.edView=edView;
 
 /* ═══ Grants ═══ */
 async function loadCosmeticSelects(){const r=await api('/v1/admin/cosmetics/catalog'),o=r.data.items.map(i=>`<option value="${esc(i.id)}">${esc(i.name)} (${esc(i.slot)})</option>`).join('');$('grant-cos').innerHTML=o;$('revoke-cos').innerHTML=o;$('owners-cos').innerHTML=o;loadOwners()}
