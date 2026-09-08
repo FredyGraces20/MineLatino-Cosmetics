@@ -1,0 +1,5 @@
+// Redirects Gradle build output to a unique directory to avoid OneDrive file locks.
+def timestamp = System.currentTimeMillis().toString()
+allprojects {
+    layout.buildDirectory.set(file("build/isolated-${timestamp}"))
+}

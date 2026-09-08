@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "package": "com.minelatino.cosmetics.client.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "PauseScreenMixin",
+    "LivingEntityRendererAccessor",
+    "PlayerRendererMixin",
+    "MinecraftMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

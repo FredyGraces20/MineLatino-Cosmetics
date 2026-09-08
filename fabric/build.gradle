@@ -12,11 +12,57 @@ dependencies {
     mappings loom.officialMojangMappings()
     modImplementation "net.fabricmc:fabric-loader:${fabricLoader}"
 }
-sourceSets.main {
-    java.srcDirs '../common/src/main/java', '../client/src/main/java'
-    resources.srcDirs '../client/src/main/resources'
+
+def versionSrc = "../client-${mcVersion}"
+def versionDir = file(versionSrc)
+
+if (mcVersion != '1.21.4' && versionDir.exists()) {
+    // Copy unchanged client files into the version-specific source tree
+    // so that only common/ + client-<version>/ are needed as source dirs.
+    def clientJava = file('../client/src/main/java')
+    def versionJava = file("${versionSrc}/src/main/java")
+    def clientRes = file('../client/src/main/resources')
+    def versionRes = file("${versionSrc}/src/main/resources")
+
+    task copyUnchangedClientSources(type: Copy) {
+        description "Copy non-overridden client sources into the ${mcVersion} source tree"
+        from clientJava
+        into versionJava
+        // Skip files that already exist in the version-specific directory
+        eachFile { details ->
+            def target = new File(versionJava, details.path)
+            if (target.exists()) details.exclude()
+        }
+        includeEmptyDirs = false
+    }
+
+    task copyUnchangedClientResources(type: Copy) {
+        description "Copy non-overridden client resources into the ${mcVersion} resource tree"
+        from clientRes
+        into versionRes
+        eachFile { details ->
+            def target = new File(versionRes, details.path)
+            if (target.exists()) details.exclude()
+        }
+        includeEmptyDirs = false
+    }
+
+    compileJava.dependsOn copyUnchangedClientSources, copyUnchangedClientResources
+    processResources.dependsOn copyUnchangedClientResources
+
+    sourceSets.main {
+        java.srcDirs '../common/src/main/java', "${versionSrc}/src/main/java"
+        resources.srcDirs "${versionSrc}/src/main/resources"
+    }
+} else {
+    sourceSets.main {
+        java.srcDirs '../common/src/main/java', '../client/src/main/java'
+        resources.srcDirs '../client/src/main/resources'
+    }
 }
+
 processResources {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     inputs.property 'version', project.version
     inputs.property 'mcVersion', mcVersion
     inputs.property 'fabricLoader', fabricLoader

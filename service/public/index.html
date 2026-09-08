@@ -304,14 +304,7 @@ tr:hover td { background: var(--accent-dim); }
 </div>
 
 <script src="three.min.js"></script>
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.156.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.156.0/examples/jsm/"
-  }
-}
-</script>
+
 <script>
 // ════════════════════════════════════════════════════════════
 // Core
@@ -722,17 +715,28 @@ async function loadAudit() {
   } else showLogin();
 })();
 </script>
-<script type="module">
+<script>
 // ════════════════════════════════════════════════════════════
-// Transform Editor (Three.js + TransformControls)
+// Transform Editor (uses global THREE from three.min.js)
+// TransformControls loaded dynamically from local file
 // ════════════════════════════════════════════════════════════
-import * as THREE from 'three';
-import { TransformControls } from 'three/addons/controls/TransformControls.js';
+let _tcLoaded = false;
+function ensureTransformControls() {
+  if (_tcLoaded || typeof THREE.TransformControls !== 'undefined') { _tcLoaded = true; return Promise.resolve(); }
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'TransformControls.js';
+    s.onload = () => { _tcLoaded = true; resolve(); };
+    s.onerror = () => reject(new Error('TransformControls no se pudo cargar'));
+    document.head.appendChild(s);
+  });
+}
 
 let edRenderer, edScene, edCamera, edControls, edCosmeticMesh, edPlayerGroup;
 let edAnimId, edCurrentCosmeticId = null, edTransformMode = 'translate';
 
-function edInit() {
+async function edInit() {
+  await ensureTransformControls();
   if (edRenderer) return;
   const container = document.getElementById('transform-editor');
   const canvas = document.createElement('canvas');
@@ -760,8 +764,9 @@ function edInit() {
   edPlayerGroup = createPlayerModel();
   edScene.add(edPlayerGroup);
 
-  // TransformControls
-  edControls = new TransformControls(edCamera, canvas);
+  // TransformControls (from local patched file, exposes global THREE.TransformControls or standalone class)
+  const TC = THREE.TransformControls || window.TransformControls;
+  edControls = new TC(edCamera, canvas);
   edControls.addEventListener('change', edOnTransformChange);
   edControls.setTranslationSnap(0.0625); // 1/16 in -1..1 space
   edControls.setRotationSnap(THREE.MathUtils.degToRad(15));
@@ -996,7 +1001,12 @@ async function openTransformEditor() {
   const id = document.getElementById('res-cos').value;
   if (!id) { if (typeof status === 'function') status('Selecciona un cosmético', false); return; }
   edCurrentCosmeticId = id;
-  edInit();
+  try {
+    await edInit();
+  } catch (e) {
+    if (typeof status === 'function') status('Editor 3D no disponible: ' + e.message, false);
+    return;
+  }
   const editorEl = document.getElementById('transform-editor');
   editorEl.classList.remove('hidden');
   document.getElementById('preview-controls').classList.add('hidden');

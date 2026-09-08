@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "minelatino_cosmetics",
+  "version": "${version}",
+  "name": "MineLatino Cosmetics",
+  "description": "Base experimental de cosméticos y menú ESC de MineLatino.",
+  "environment": "client",
+  "license": "All Rights Reserved",
+  "mixins": ["minelatino_cosmetics.mixins.json"],
+  "depends": { "fabricloader": ">=${fabricLoader}", "minecraft": "${mcVersion}", "java": ">=21" }
+}
