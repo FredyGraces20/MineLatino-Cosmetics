@@ -1,0 +1,26 @@
+plugins { id 'fabric-loom' version '1.9.2' }
+
+def mcVersion = project.findProperty('mcVersion') ?: '1.21.4'
+def props = new Properties()
+file('../versions.properties').withInputStream { props.load(it) }
+def fabricLoader = props.getProperty("${mcVersion}.fabric.loader") ?: '0.16.14'
+
+base.archivesName = "minelatino-cosmetics-fabric-${mcVersion}"
+
+dependencies {
+    minecraft "com.mojang:minecraft:${mcVersion}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${fabricLoader}"
+}
+sourceSets.main {
+    java.srcDirs '../common/src/main/java', '../client/src/main/java'
+    resources.srcDirs '../client/src/main/resources'
+}
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'mcVersion', mcVersion
+    inputs.property 'fabricLoader', fabricLoader
+    filesMatching('fabric.mod.json') {
+        expand(version: project.version, mcVersion: mcVersion, fabricLoader: fabricLoader)
+    }
+}

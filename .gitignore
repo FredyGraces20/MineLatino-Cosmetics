@@ -1,0 +1,9 @@
+.gradle/
+**/build/
+**/run/
+.idea/
+*.iml
+dist/
+service/data/
+service/.env
+service/node_modules/

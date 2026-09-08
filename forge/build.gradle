@@ -1,0 +1,40 @@
+plugins { id 'net.minecraftforge.gradle' version '6.0.54' }
+
+def mcVersion = project.findProperty('mcVersion') ?: '1.21.4'
+def props = new Properties()
+file('../versions.properties').withInputStream { props.load(it) }
+def forgeVersion = props.getProperty("${mcVersion}.forge.version") ?: '54.1.0'
+
+base.archivesName = "minelatino-cosmetics-forge-${mcVersion}"
+minecraft {
+    mappings channel: 'official', version: mcVersion
+    reobf = false
+    copyIdeResources = true
+    runs {
+        client {
+            workingDirectory project.file('run')
+            mods { minelatino_cosmetics { source sourceSets.main } }
+        }
+    }
+}
+dependencies { minecraft "net.minecraftforge:forge:${mcVersion}-${forgeVersion}" }
+sourceSets.main {
+    java.srcDirs '../common/src/main/java', '../client/src/main/java'
+    java.exclude '**/mixin/**'
+    resources.srcDirs '../client/src/main/resources'
+    resources.exclude 'minelatino_cosmetics.mixins.json'
+}
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'mcVersion', mcVersion
+    inputs.property 'forgeVersion', forgeVersion
+    filesMatching('META-INF/mods.toml') {
+        expand(version: project.version, mcVersion: mcVersion, forgeVersion: forgeVersion)
+    }
+}
+// Forge 1.21.4 uses official names at runtime; its MDK merges module outputs.
+sourceSets.each {
+    def dir = layout.buildDirectory.dir("sourceSets/$it.name")
+    it.output.resourcesDir = dir
+    it.java.destinationDirectory = dir
+}

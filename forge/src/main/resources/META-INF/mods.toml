@@ -1,0 +1,21 @@
+modLoader="javafml"
+loaderVersion="[${forgeVersion},)"
+license="All Rights Reserved"
+clientSideOnly=true
+[[mods]]
+modId="minelatino_cosmetics"
+version="${version}"
+displayName="MineLatino Cosmetics"
+description='''Base experimental de cosméticos y menú ESC de MineLatino.'''
+[[dependencies.minelatino_cosmetics]]
+modId="forge"
+mandatory=true
+versionRange="[${forgeVersion},)"
+ordering="NONE"
+side="CLIENT"
+[[dependencies.minelatino_cosmetics]]
+modId="minecraft"
+mandatory=true
+versionRange="[${mcVersion}]"
+ordering="NONE"
+side="CLIENT"

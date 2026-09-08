@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MineLatino Cosmetics — Panel</title>
+<style>
+:root {
+  --bg: #1a1c24; --surface: #20232b; --well: #16181f; --border: #2e313a;
+  --text: #e8eaf0; --dim: #8b90a0; --accent: #53dfed; --accent-dim: rgba(83,223,237,.12);
+  --gold: #edba62; --danger: #f06565; --success: #4ecdc4;
+  --radius: 14px; --radius-sm: 8px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+.hidden { display: none !important; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { opacity: .85; }
+
+/* ── Login ─────────────────────────────────────────────────── */
+#login-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: radial-gradient(ellipse at 50% 40%, #252830, var(--bg)); }
+.login-box { background: var(--surface); padding: 2.5rem 2rem; border-radius: var(--radius); width: 100%; max-width: 380px; border: 1px solid var(--border); }
+.login-box h1 { color: var(--accent); font-size: 1.1rem; margin-bottom: .25rem; letter-spacing: .06em; text-transform: uppercase; }
+.login-box p { color: var(--dim); font-size: .82rem; margin-bottom: 1.25rem; }
+
+/* ── Layout ────────────────────────────────────────────────── */
+header { background: var(--surface); border-bottom: 2px solid var(--accent); padding: .6rem 1.5rem; display: flex; justify-content: space-between; align-items: center; }
+header h1 { font-size: .85rem; color: var(--accent); letter-spacing: .08em; text-transform: uppercase; font-weight: 700; }
+header .user-info { color: var(--dim); font-size: .8rem; }
+header .user-info a { color: var(--dim); margin-left: .5rem; }
+header .user-info a:hover { color: var(--accent); }
+.nav-row { display: flex; background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 1rem; gap: 0; overflow-x: auto; }
+.nav-row button { background: none; border: none; color: var(--dim); padding: .7rem 1.1rem; cursor: pointer; font-size: .82rem; border-bottom: 2px solid transparent; white-space: nowrap; transition: color .15s, border-color .15s; }
+.nav-row button:hover { color: var(--text); }
+.nav-row button.active { color: var(--accent); border-bottom-color: var(--accent); }
+main { padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
+
+/* ── Forms ─────────────────────────────────────────────────── */
+input, select, textarea { background: var(--well); border: 1px solid var(--border); color: var(--text); padding: .55rem .8rem; border-radius: var(--radius-sm); font-size: .84rem; width: 100%; transition: border-color .15s; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+label { display: block; color: var(--dim); font-size: .75rem; font-weight: 500; margin-bottom: .3rem; margin-top: .85rem; letter-spacing: .03em; text-transform: uppercase; }
+.btn { background: var(--accent); color: var(--bg); border: none; padding: .55rem 1.4rem; border-radius: var(--radius-sm); cursor: pointer; font-weight: 600; font-size: .82rem; transition: opacity .15s; letter-spacing: .02em; }
+.btn:hover { opacity: .88; }
+.btn:active { transform: scale(.98); }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-ghost { background: transparent; color: var(--dim); border: 1px solid var(--border); }
+.btn-ghost:hover { color: var(--text); border-color: var(--dim); }
+.btn-sm { padding: .3rem .8rem; font-size: .78rem; }
+.row { display: flex; gap: 1rem; }
+.row > * { flex: 1; }
+
+/* ── Cards ─────────────────────────────────────────────────── */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.5rem; margin-bottom: 1.15rem; }
+.card h2 { font-size: .85rem; margin-bottom: .85rem; color: var(--gold); letter-spacing: .06em; text-transform: uppercase; font-weight: 700; }
+.card .hint { color: var(--dim); font-size: .78rem; margin-bottom: .85rem; line-height: 1.5; }
+
+/* ── Table ─────────────────────────────────────────────────── */
+table { width: 100%; border-collapse: collapse; margin-top: .75rem; font-size: .82rem; }
+th { text-align: left; color: var(--dim); padding: .55rem .6rem; border-bottom: 1px solid var(--border); font-weight: 500; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; }
+td { padding: .55rem .6rem; border-bottom: 1px solid var(--border); }
+tr:hover td { background: var(--accent-dim); }
+
+/* ── Badges ────────────────────────────────────────────────── */
+.badge { display: inline-block; padding: .15rem .55rem; border-radius: 4px; font-size: .72rem; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
+.badge-published { background: rgba(78,205,196,.12); color: var(--success); }
+.badge-draft { background: rgba(139,144,160,.12); color: var(--dim); }
+.badge-retired { background: rgba(240,101,101,.12); color: var(--danger); }
+
+/* ── Status ────────────────────────────────────────────────── */
+.status { padding: .65rem 1rem; border-radius: var(--radius-sm); margin-bottom: 1rem; font-size: .82rem; font-weight: 500; }
+.status-error { background: rgba(240,101,101,.08); color: var(--danger); border: 1px solid rgba(240,101,101,.18); }
+.status-ok { background: rgba(78,205,196,.08); color: var(--success); border: 1px solid rgba(78,205,196,.18); }
+
+/* ── 3D Preview ────────────────────────────────────────────── */
+.preview-stage { position: relative; width: 100%; height: 320px; border-radius: var(--radius); overflow: hidden; background: radial-gradient(ellipse at 50% 55%, #30281a20, transparent 70%), linear-gradient(160deg, #20232b, #13151c); border: 1px solid var(--border); }
+.preview-stage canvas { display: block; width: 100%; height: 100%; }
+.preview-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: .85rem; flex-direction: column; gap: .5rem; }
+.preview-controls { position: absolute; bottom: 10px; left: 0; right: 0; display: flex; gap: 6px; justify-content: center; }
+.preview-controls button { padding: 5px 12px; border: 1px solid rgba(255,255,255,.12); background: rgba(20,22,28,.85); border-radius: 7px; color: #ccc; cursor: pointer; font-size: .75rem; }
+.preview-controls button:hover { background: rgba(20,22,28,.95); color: #fff; }
+
+/* ── File list ─────────────────────────────────────────────── */
+.file-row { display: flex; align-items: center; gap: .75rem; padding: .6rem .75rem; border-radius: var(--radius-sm); background: var(--well); border: 1px solid var(--border); margin-bottom: .5rem; }
+.file-row img { width: 40px; height: 40px; image-rendering: pixelated; border-radius: 4px; border: 1px solid var(--border); object-fit: contain; background: #000; }
+.file-row .file-info { flex: 1; min-width: 0; }
+.file-row .file-name { font-size: .82rem; font-weight: 600; color: var(--text); }
+.file-row .file-meta { font-size: .72rem; color: var(--dim); margin-top: 2px; }
+
+/* ── Grid layout ───────────────────────────────────────────── */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.15rem; }
+@media (max-width: 800px) { .grid-2 { grid-template-columns: 1fr; } }
+.span-2 { grid-column: span 2; }
+@media (max-width: 800px) { .span-2 { grid-column: span 1; } }
+
+/* ── Scrollbar ─────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+</style>
+</head>
+<body>
+
+<!-- Login -->
+<div id="login-screen">
+  <div class="login-box">
+    <h1>MineLatino Cosmetics</h1>
+    <p>Panel de administración</p>
+    <div id="login-status"></div>
+    <div id="bootstrap-form" class="hidden">
+      <p style="color:var(--accent);font-size:.78rem;margin-bottom:.75rem;">Primera vez — crea la cuenta administrativa</p>
+      <label>Usuario</label><input id="boot-user" placeholder="admin" maxlength="32">
+      <label>Contraseña (mín. 8)</label><input id="boot-pass" type="password" maxlength="128">
+      <label>Token bootstrap</label><input id="boot-token" type="password">
+      <div style="margin-top:1rem"><button class="btn" onclick="doBootstrap()">Crear administrador</button></div>
+    </div>
+    <div id="login-form">
+      <label>Usuario</label><input id="login-user" placeholder="admin" maxlength="32">
+      <label>Contraseña</label><input id="login-pass" type="password" maxlength="128">
+      <div style="margin-top:1rem"><button class="btn" onclick="doLogin()">Iniciar sesión</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- Panel -->
+<div id="panel" class="hidden">
+  <header>
+    <h1>MineLatino Cosmetics</h1>
+    <div class="user-info"><span id="admin-name"></span> <a href="#" onclick="doLogout()">Cerrar sesión</a></div>
+  </header>
+  <div class="nav-row">
+    <button class="active" onclick="showTab('catalog',this)">Catálogo</button>
+    <button onclick="showTab('grant',this)">Asignar</button>
+    <button onclick="showTab('players',this)">Jugadores</button>
+    <button onclick="showTab('menu',this)">Menú ESC</button>
+    <button onclick="showTab('audit',this)">Auditoría</button>
+  </div>
+  <main>
+    <div id="panel-status"></div>
+
+    <!-- ═══ Catalog Tab ═══ -->
+    <div id="tab-catalog">
+      <div class="grid-2">
+        <!-- Left: form -->
+        <div>
+          <div class="card">
+            <h2>Cosmético</h2>
+            <div class="row">
+              <div><label>ID</label><input id="cos-id" placeholder="capa-fundador" maxlength="64"></div>
+              <div><label>Nombre</label><input id="cos-name" placeholder="Capa Fundador" maxlength="80"></div>
+            </div>
+            <div class="row">
+              <div><label>Zona</label><select id="cos-slot"><option value="HAT">Cabeza</option><option value="CAPE">Capa</option><option value="WINGS">Alas</option><option value="BACKPACK">Mochila</option><option value="PET">Mascota</option></select></div>
+              <div><label>Estado</label><select id="cos-status"><option value="draft">Borrador</option><option value="published">Publicado</option><option value="retired">Retirado</option></select></div>
+            </div>
+            <label>Descripción</label><textarea id="cos-description" maxlength="2000" rows="2" placeholder="Qué incluye y cómo se ve"></textarea>
+            <div class="row">
+              <div><label>Precio</label><input id="cos-price" type="number" min="0.01" step="0.01" placeholder="9.99"></div>
+              <div><label>Moneda</label><select id="cos-currency"><option>USD</option><option>EUR</option><option>UYU</option><option>ARS</option><option>BRL</option><option>MXN</option></select></div>
+            </div>
+            <div style="margin-top:1rem"><button class="btn" onclick="saveCosmetic()">Guardar cosmético</button></div>
+          </div>
+        </div>
+        <!-- Right: 3D preview -->
+        <div>
+          <div class="card" style="padding:0;overflow:hidden;">
+            <div class="preview-stage" id="preview-stage">
+              <canvas id="preview-canvas"></canvas>
+              <div class="preview-placeholder" id="preview-placeholder">
+                <span style="font-size:1.8rem;opacity:.4">🧊</span>
+                <span>Selecciona un cosmético</span>
+              </div>
+              <div class="preview-controls hidden" id="preview-controls">
+                <button onclick="previewTurn(false)">Frente</button>
+                <button onclick="previewTurn(true)">Espalda</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resources card (full width) -->
+      <div class="card">
+        <h2>Recursos</h2>
+        <div class="grid-2">
+          <div>
+            <label>Cosmético</label><select id="res-cos" onchange="onResourceCosmeticChange()"></select>
+            <!-- Texture list -->
+            <div id="files-list" style="margin-top:1rem;"></div>
+            <!-- Upload textures -->
+            <div style="margin-top:1rem;display:flex;gap:.6rem;align-items:end;">
+              <div style="flex:1"><label>Texturas PNG</label><input type="file" id="res-files" accept=".png" multiple></div>
+              <button class="btn" onclick="uploadFiles()">Subir</button>
+            </div>
+            <!-- Upload mcmeta -->
+            <div style="margin-top:.85rem;display:flex;gap:.6rem;align-items:end;border-top:1px solid var(--border);padding-top:.85rem;">
+              <div style="flex:1">
+                <label>.mcmeta para</label><select id="mcmeta-target"></select>
+                <input type="file" id="mcmeta-file" accept=".json" style="margin-top:.4rem;">
+              </div>
+              <button class="btn btn-ghost" onclick="uploadMcmeta()">Subir .mcmeta</button>
+            </div>
+          </div>
+          <div>
+            <label>Modelo 3D (JSON Blockbench)</label>
+            <div id="model-info" style="margin:.5rem 0;min-height:36px;font-size:.82rem;"></div>
+            <input type="file" id="model-file" accept=".json">
+            <div style="margin-top:.6rem;display:flex;gap:.5rem;">
+              <button class="btn" onclick="uploadModel()">Subir modelo</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteModel()">Eliminar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Catalog table -->
+      <div class="card">
+        <h2>Catálogo</h2>
+        <table><thead><tr><th>ID</th><th>Nombre</th><th>Zona</th><th>Estado</th><th>Rev</th><th>Recursos</th><th></th></tr></thead><tbody id="catalog-body"></tbody></table>
+      </div>
+    </div>
+
+    <!-- ═══ Grant Tab ═══ -->
+    <div id="tab-grant" class="hidden">
+      <div class="grid-2">
+        <div class="card">
+          <h2>Asignar</h2>
+          <label>UUID del jugador</label><input id="grant-uuid" placeholder="UUID con o sin guiones" maxlength="36">
+          <label>Cosmético</label><select id="grant-cos"></select>
+          <label>Referencia <span style="color:var(--dim)">(opcional)</span></label><input id="grant-ref" placeholder="manual-001" maxlength="100">
+          <label>Motivo <span style="color:var(--dim)">(opcional)</span></label><input id="grant-reason" placeholder="Entrega administrativa" maxlength="240">
+          <div style="margin-top:1rem"><button class="btn" onclick="doGrant()">Asignar</button></div>
+        </div>
+        <div class="card">
+          <h2>Revocar</h2>
+          <label>UUID del jugador</label><input id="revoke-uuid" placeholder="UUID con o sin guiones" maxlength="36">
+          <label>Cosmético</label><select id="revoke-cos"></select>
+          <label>Referencia <span style="color:var(--dim)">(opcional)</span></label><input id="revoke-ref" placeholder="revoke-001" maxlength="100">
+          <label>Motivo <span style="color:var(--dim)">(opcional)</span></label><input id="revoke-reason" placeholder="Revocación" maxlength="240">
+          <div style="margin-top:1rem"><button class="btn btn-danger" onclick="doRevoke()">Revocar</button></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Propietarios</h2>
+        <label>Cosmético</label><select id="owners-cos" onchange="loadOwners()"></select>
+        <table><thead><tr><th>UUID</th><th>Nombre</th><th>Verificado</th></tr></thead><tbody id="owners-body"></tbody></table>
+      </div>
+    </div>
+
+    <!-- ═══ Players Tab ═══ -->
+    <div id="tab-players" class="hidden">
+      <div class="card">
+        <h2>Buscar jugadores</h2>
+        <div style="display:flex;gap:.6rem;align-items:end;">
+          <div style="flex:1"><label>Nombre o UUID</label><input id="player-query" placeholder="Mín. 2 caracteres"></div>
+          <button class="btn" onclick="searchPlayers()">Buscar</button>
+        </div>
+        <table><thead><tr><th>UUID</th><th>Nombre</th><th>Verificado</th></tr></thead><tbody id="players-body"></tbody></table>
+      </div>
+    </div>
+
+    <!-- ═══ Menu Tab ═══ -->
+    <div id="tab-menu" class="hidden">
+      <div class="card">
+        <h2>Menú ESC</h2>
+        <p class="hint">Revisión actual: <span id="menu-revision">-</span></p>
+        <textarea id="menu-json" rows="10" style="font-family:monospace;font-size:.78rem;"></textarea>
+        <div style="margin-top:1rem"><button class="btn" onclick="saveMenu()">Publicar</button></div>
+      </div>
+      <div class="card">
+        <h2>Historial</h2>
+        <table><thead><tr><th>Rev.</th><th>Configuración</th><th></th></tr></thead><tbody id="menu-history-body"></tbody></table>
+      </div>
+    </div>
+
+    <!-- ═══ Audit Tab ═══ -->
+    <div id="tab-audit" class="hidden">
+      <div class="card">
+        <h2>Auditoría</h2>
+        <table><thead><tr><th>ID</th><th>Actor</th><th>Acción</th><th>Detalle</th><th>Fecha</th></tr></thead><tbody id="audit-body"></tbody></table>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="three.min.js"></script>
+<script>
+// ════════════════════════════════════════════════════════════
+// Core
+// ════════════════════════════════════════════════════════════
+let token = localStorage.getItem('ml_admin_token') || '';
+let adminUser = localStorage.getItem('ml_admin_user') || '';
+const $ = id => document.getElementById(id);
+const esc = s => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+const api = async (path, opts = {}) => {
+  const { _noAutoLogout, ...fetchOpts } = opts;
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(path, { ...fetchOpts, headers: { ...headers, ...fetchOpts.headers } });
+  const data = await res.json();
+  if (res.status === 401 && !_noAutoLogout) { token = ''; localStorage.removeItem('ml_admin_token'); localStorage.removeItem('ml_admin_user'); showLogin(); }
+  return { status: res.status, data };
+};
+const status = (msg, ok) => $('panel-status').innerHTML = `<div class="status ${ok ? 'status-ok' : 'status-error'}">${esc(msg)}</div>`;
+const clearStatus = () => $('panel-status').innerHTML = '';
+
+// ════════════════════════════════════════════════════════════
+// Auth
+// ════════════════════════════════════════════════════════════
+function showLogin() { $('panel').classList.add('hidden'); $('login-screen').classList.remove('hidden'); }
+function showPanel() { $('login-screen').classList.add('hidden'); $('panel').classList.remove('hidden'); $('admin-name').textContent = adminUser; loadCatalog(); }
+async function doBootstrap() {
+  const u = $('boot-user').value.trim(), p = $('boot-pass').value, t = $('boot-token').value.trim();
+  if (!u || !p || !t) return $('login-status').innerHTML = '<div class="status status-error">Todos los campos son requeridos</div>';
+  const r = await fetch('/v1/admin/auth/bootstrap', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` }, body: JSON.stringify({ username: u, password: p }) });
+  const d = await r.json();
+  if (!r.ok) return $('login-status').innerHTML = `<div class="status status-error">${d.error}</div>`;
+  $('login-status').innerHTML = '<div class="status status-ok">Administrador creado. Inicia sesión.</div>';
+  $('bootstrap-form').classList.add('hidden'); $('login-form').classList.remove('hidden');
+}
+async function doLogin() {
+  const u = $('login-user').value.trim(), p = $('login-pass').value;
+  if (!u || !p) return $('login-status').innerHTML = '<div class="status status-error">Completa todos los campos</div>';
+  const r = await fetch('/v1/admin/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
+  const d = await r.json();
+  if (!r.ok) return $('login-status').innerHTML = `<div class="status status-error">${d.error}</div>`;
+  token = d.token; adminUser = d.username;
+  localStorage.setItem('ml_admin_token', token); localStorage.setItem('ml_admin_user', adminUser);
+  $('login-status').innerHTML = ''; showPanel();
+}
+async function doLogout() {
+  await api('/v1/admin/auth/logout', { method: 'POST' });
+  token = ''; adminUser = ''; localStorage.removeItem('ml_admin_token'); localStorage.removeItem('ml_admin_user'); showLogin();
+}
+
+// ════════════════════════════════════════════════════════════
+// Tabs
+// ════════════════════════════════════════════════════════════
+function showTab(name, btn) {
+  document.querySelectorAll('[id^="tab-"]').forEach(el => el.classList.add('hidden'));
+  $('tab-' + name).classList.remove('hidden');
+  document.querySelectorAll('.nav-row button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  clearStatus();
+  if (name === 'catalog') loadCatalog();
+  if (name === 'grant') loadCosmeticSelects();
+  if (name === 'menu') loadMenu();
+  if (name === 'audit') loadAudit();
+}
+
+// ════════════════════════════════════════════════════════════
+// Catalog
+// ════════════════════════════════════════════════════════════
+let catalogProducts = new Map();
+let catalogItems = [];
+async function loadCatalog() {
+  const r = await api('/v1/admin/cosmetics/catalog');
+  catalogItems = r.data.items;
+  catalogProducts = new Map(r.data.items.map(i => [i.id, i.product]));
+  $('catalog-body').innerHTML = r.data.items.map(i => `<tr>
+    <td><code style="font-size:.78rem">${esc(i.id)}</code></td>
+    <td>${esc(i.name)}</td>
+    <td>${esc(i.slot)}</td>
+    <td><span class="badge badge-${esc(i.status)}">${esc(i.status)}</span></td>
+    <td>${i.revision}</td>
+    <td>${i.files?.length ? i.files.length + ' tex' : '—'}${i.resource?.model_path ? ' + 3D' : ''}</td>
+    <td><button class="btn btn-sm btn-ghost" onclick="selectCosmetic('${esc(i.id)}')">Editar</button></td>
+  </tr>`).join('');
+  const optsHtml = r.data.items.map(i => `<option value="${esc(i.id)}">${esc(i.name)} (${esc(i.slot)})</option>`).join('');
+  $('res-cos').innerHTML = optsHtml;
+  onResourceCosmeticChange();
+}
+function selectCosmetic(id) {
+  const item = catalogItems.find(i => i.id === id);
+  if (!item) return;
+  $('cos-id').value = id; $('cos-name').value = item.name; $('cos-slot').value = item.slot; $('cos-status').value = item.status;
+  $('cos-id').dataset.revision = item.revision;
+  const product = catalogProducts.get(id);
+  $('cos-description').value = product?.description || '';
+  $('cos-price').value = product?.amountMinor == null ? '' : (product.amountMinor / 100).toFixed(2);
+  $('cos-currency').value = product?.currency || 'USD';
+  // Select in resource dropdown too
+  $('res-cos').value = id;
+  onResourceCosmeticChange();
+  render3DPreview(id);
+}
+async function saveCosmetic() {
+  const id = $('cos-id').value.trim();
+  const rev = Number($('cos-id').dataset.revision || 0);
+  if (!id) return status('ID requerido', false);
+  const r = await api(`/v1/admin/cosmetics/catalog/${id}`, { method: 'PUT', body: JSON.stringify({
+    name: $('cos-name').value.trim(), slot: $('cos-slot').value, status: $('cos-status').value, expectedRevision: rev,
+    product: { description: $('cos-description').value, amountMinor: $('cos-price').value === '' ? null : Math.round(Number($('cos-price').value) * 100), currency: $('cos-currency').value }
+  })});
+  if (r.status === 200) { status('Guardado', true); $('cos-id').dataset.revision = r.data.revision; loadCatalog(); }
+  else status(r.data.error, false);
+}
+
+// ════════════════════════════════════════════════════════════
+// Resources
+// ════════════════════════════════════════════════════════════
+async function onResourceCosmeticChange() {
+  const id = $('res-cos').value;
+  if (!id) { $('files-list').innerHTML = ''; return; }
+  const r = await api('/v1/admin/cosmetics/catalog');
+  const item = r.data.items.find(i => i.id === id);
+  const files = item?.files || [];
+  $('mcmeta-target').innerHTML = files.map(f => `<option value="${esc(f.name)}">${esc(f.name)}</option>`).join('') || '<option value="">(sin texturas)</option>';
+  if (files.length === 0) {
+    $('files-list').innerHTML = '<p style="color:var(--dim);font-size:.8rem;padding:.5rem 0;">Sin texturas</p>';
+  } else {
+    $('files-list').innerHTML = files.map(f => `<div class="file-row">
+      <img src="/v1/resources/${id}?file=${esc(f.name)}" alt="">
+      <div class="file-info">
+        <div class="file-name">${esc(f.name)}</div>
+        <div class="file-meta">${(f.file_size/1024).toFixed(1)} KB · Mcmeta: ${f.mcmeta_path ? '<span style="color:var(--success)">sí</span>' : 'no'}</div>
+      </div>
+      <button class="btn btn-danger btn-sm" onclick="deleteFile('${esc(id)}','${esc(f.name)}')">Eliminar</button>
+    </div>`).join('');
+  }
+  // Model info
+  if (item?.resource?.model_path) {
+    $('model-info').innerHTML = `<span style="color:var(--success)">Modelo cargado</span> <span style="color:var(--dim)">${item.resource.model_size ? (item.resource.model_size/1024).toFixed(1) + ' KB' : ''}</span> <a href="/v1/resources/${id}?type=model" target="_blank">Ver JSON</a>`;
+  } else {
+    $('model-info').innerHTML = '<span style="color:var(--dim)">Sin modelo 3D</span>';
+  }
+  render3DPreview(id);
+}
+async function uploadFiles() {
+  const id = $('res-cos').value;
+  if (!id) return status('Selecciona un cosmético', false);
+  const fileList = $('res-files').files;
+  if (!fileList.length) return status('Selecciona archivos', false);
+  let ok = 0, fail = 0;
+  for (const file of fileList) {
+    const name = file.name.replace(/\.png$/i, '').toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 32);
+    if (!name) { fail++; continue; }
+    const buffer = await file.arrayBuffer();
+    const res = await fetch(`/v1/admin/cosmetics/catalog/${id}/files/${name}`, {
+      method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'X-Filename': file.name, 'Content-Type': 'application/octet-stream' }, body: buffer
+    });
+    if (res.ok) ok++; else fail++;
+  }
+  $('res-files').value = '';
+  status(fail === 0 ? `${ok} textura(s) subidas` : `${ok} subida(s), ${fail} error(es)`, fail === 0);
+  loadCatalog();
+}
+async function uploadMcmeta() {
+  const id = $('res-cos').value, name = $('mcmeta-target').value;
+  if (!id || !name) return status('Selecciona cosmético y textura', false);
+  const file = $('mcmeta-file').files[0];
+  if (!file) return status('Selecciona un .json', false);
+  const buffer = await file.arrayBuffer();
+  const res = await fetch(`/v1/admin/cosmetics/catalog/${id}/files/${name}/mcmeta`, {
+    method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'X-Filename': file.name, 'Content-Type': 'application/octet-stream' }, body: buffer
+  });
+  const d = await res.json();
+  if (res.ok) { status('.mcmeta subido', true); $('mcmeta-file').value = ''; onResourceCosmeticChange(); }
+  else status('Error: ' + (d.error || res.statusText), false);
+}
+async function deleteFile(cosId, name) {
+  const res = await fetch(`/v1/admin/cosmetics/catalog/${cosId}/files/${name}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
+  const d = await res.json();
+  if (res.ok) { status('Textura eliminada', true); loadCatalog(); } else status(d.error, false);
+}
+async function uploadModel() {
+  const id = $('res-cos').value;
+  if (!id) return status('Selecciona un cosmético', false);
+  const file = $('model-file').files[0];
+  if (!file) return status('Selecciona un JSON', false);
+  const buffer = await file.arrayBuffer();
+  const res = await fetch(`/v1/admin/cosmetics/catalog/${id}/model`, {
+    method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'X-Filename': file.name, 'Content-Type': 'application/octet-stream' }, body: buffer
+  });
+  const d = await res.json();
+  if (res.ok) { status('Modelo subido', true); $('model-file').value = ''; loadCatalog(); } else status('Error: ' + (d.error || res.statusText), false);
+}
+async function deleteModel() {
+  const id = $('res-cos').value;
+  if (!id) return status('Selecciona un cosmético', false);
+  const res = await fetch(`/v1/admin/cosmetics/catalog/${id}/model`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
+  const d = await res.json();
+  if (res.ok) { status('Modelo eliminado', true); loadCatalog(); } else status(d.error, false);
+}
+
+// ════════════════════════════════════════════════════════════
+// 3D Preview (Three.js)
+// ════════════════════════════════════════════════════════════
+let previewRenderer, previewScene, previewCamera, previewMesh, previewAnimId;
+function initPreviewGL() {
+  if (previewRenderer) return;
+  const canvas = $('preview-canvas');
+  previewRenderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  previewRenderer.setClearColor(0x000000, 0);
+  const rect = canvas.parentElement.getBoundingClientRect();
+  previewRenderer.setSize(rect.width, rect.height, false);
+}
+function previewTurn(back) {
+  if (!previewCamera) return;
+  const dist = previewCamera.position.length();
+  previewCamera.position.set(back ? 0 : 0, previewCamera.position.y, back ? dist : -dist);
+  previewCamera.lookAt(0, 0, 0);
+}
+async function render3DPreview(cosmeticId) {
+  if (!cosmeticId) return;
+  const r = await api('/v1/admin/cosmetics/catalog');
+  const item = r.data.items.find(i => i.id === cosmeticId);
+  if (!item?.resource?.model_path || !item?.files?.length) {
+    $('preview-placeholder').classList.remove('hidden');
+    $('preview-placeholder').querySelector('span:last-child').textContent = item?.resource?.model_path ? 'Sin texturas' : 'Sin modelo 3D';
+    $('preview-controls').classList.add('hidden');
+    return;
+  }
+  try {
+    const API = window.location.origin;
+    const [modelRes, texRes] = await Promise.all([
+      fetch(`/v1/resources/${cosmeticId}?type=model`, { credentials: 'omit' }),
+      fetch(`/v1/resources/${cosmeticId}`, { credentials: 'omit' }),
+    ]);
+    if (!modelRes.ok || !texRes.ok) throw new Error('Fetch failed');
+    const model = JSON.parse(await modelRes.text());
+    const blob = await texRes.blob();
+    const bitmap = await createImageBitmap(blob, { imageOrientation: 'flipY' });
+    initPreviewGL();
+    // Cleanup previous
+    if (previewScene) { previewScene.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); } }); }
+    if (previewAnimId) cancelAnimationFrame(previewAnimId);
+    previewScene = new THREE.Scene();
+    const rect = $('preview-canvas').parentElement.getBoundingClientRect();
+    previewCamera = new THREE.PerspectiveCamera(35, rect.width / rect.height, 0.1, 500);
+    previewScene.add(new THREE.AmbientLight(0xffffff, 0.7));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+    dir.position.set(5, 10, 12);
+    previewScene.add(dir);
+    // Build geometry from model
+    const positions = [], uvs = [], indices = [];
+    let idx = 0;
+    for (const el of (model.elements || [])) {
+      const [x1,y1,z1] = el.from.map(v => (v/16)*2-1);
+      const [x2,y2,z2] = el.to.map(v => (v/16)*2-1);
+      const faces = el.faces || {};
+      for (const [dir, face] of Object.entries(faces)) {
+        const uv = face.uv || [0,0,16,16];
+        const u1 = uv[0]/16, v1 = 1-uv[3]/16, u2 = uv[2]/16, v2 = 1-uv[1]/16;
+        let verts;
+        switch(dir) {
+          case 'north': verts = [[x1,y1,z1],[x2,y1,z1],[x2,y2,z1],[x1,y2,z1]]; break;
+          case 'south': verts = [[x2,y1,z2],[x1,y1,z2],[x1,y2,z2],[x2,y2,z2]]; break;
+          case 'east':  verts = [[x2,y1,z1],[x2,y1,z2],[x2,y2,z2],[x2,y2,z1]]; break;
+          case 'west':  verts = [[x1,y1,z2],[x1,y1,z1],[x1,y2,z1],[x1,y2,z2]]; break;
+          case 'up':    verts = [[x1,y2,z1],[x2,y2,z1],[x2,y2,z2],[x1,y2,z2]]; break;
+          case 'down':  verts = [[x1,y1,z2],[x2,y1,z2],[x2,y1,z1],[x1,y1,z1]]; break;
+          default: continue;
+        }
+        const uvCoords = [[u1,v2],[u2,v2],[u2,v1],[u1,v1]];
+        for (let i = 0; i < 4; i++) { positions.push(...verts[i]); uvs.push(...uvCoords[i]); }
+        indices.push(idx,idx+1,idx+2, idx,idx+2,idx+3);
+        idx += 4;
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    const tex = new THREE.Texture(bitmap);
+    tex.minFilter = THREE.NearestFilter; tex.magFilter = THREE.NearestFilter;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    previewMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.1, roughness: 1 }));
+    previewMesh.rotation.y = Math.PI;
+    previewScene.add(previewMesh);
+    // Auto-fit camera
+    geo.computeBoundingBox();
+    const box = geo.boundingBox;
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z) || 1;
+    const dist = maxDim / (2 * Math.tan((previewCamera.fov / 2) * Math.PI / 180)) * 1.8;
+    previewCamera.position.set(0, size.y * 0.1, -dist);
+    previewCamera.lookAt(0, 0, 0);
+    $('preview-placeholder').classList.add('hidden');
+    $('preview-controls').classList.remove('hidden');
+    // Animate
+    function animate() {
+      previewAnimId = requestAnimationFrame(animate);
+      if (previewMesh) previewMesh.rotation.y += 0.005;
+      previewRenderer.render(previewScene, previewCamera);
+    }
+    animate();
+    bitmap.close();
+  } catch (e) {
+    $('preview-placeholder').classList.remove('hidden');
+    $('preview-placeholder').querySelector('span:last-child').textContent = 'Error al cargar preview';
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// Grants
+// ════════════════════════════════════════════════════════════
+async function loadCosmeticSelects() {
+  const r = await api('/v1/admin/cosmetics/catalog');
+  const opts = r.data.items.map(i => `<option value="${esc(i.id)}">${esc(i.name)} (${esc(i.slot)})</option>`).join('');
+  $('grant-cos').innerHTML = opts; $('revoke-cos').innerHTML = opts; $('owners-cos').innerHTML = opts;
+  loadOwners();
+}
+async function doGrant() {
+  let raw = $('grant-uuid').value.trim();
+  if (!raw) return status('UUID requerido', false);
+  const clean = raw.replace(/-/g, '');
+  if (!/^[a-f0-9]{32}$/i.test(clean)) return status('UUID inválido', false);
+  const r = await api('/v1/admin/cosmetics/grants', { method: 'POST', body: JSON.stringify({
+    uuid: clean, cosmeticId: $('grant-cos').value, reference: $('grant-ref').value.trim(), reason: $('grant-reason').value.trim()
+  })});
+  if (r.status === 200) status(r.data.duplicate ? 'Duplicado (ya existía)' : 'Asignado', true);
+  else status(r.data.error || 'Error', false);
+}
+async function doRevoke() {
+  let raw = $('revoke-uuid').value.trim();
+  if (!raw) return status('UUID requerido', false);
+  const clean = raw.replace(/-/g, '');
+  if (!/^[a-f0-9]{32}$/i.test(clean)) return status('UUID inválido', false);
+  const r = await api('/v1/admin/cosmetics/revocations', { method: 'POST', body: JSON.stringify({
+    uuid: clean, cosmeticId: $('revoke-cos').value, reference: $('revoke-ref').value.trim(), reason: $('revoke-reason').value.trim()
+  })});
+  if (r.status === 200) status(r.data.duplicate ? 'Duplicado' : 'Revocado', true);
+  else status(r.data.error || 'Error', false);
+}
+async function loadOwners() {
+  const id = $('owners-cos').value;
+  if (!id) return;
+  const r = await api(`/v1/admin/cosmetics/owners/${id}`);
+  $('owners-body').innerHTML = r.data.items.map(i => `<tr><td><code style="font-size:.78rem">${esc(i.uuid)}</code></td><td>${esc(i.name || '-')}</td><td>${i.verified_at ? new Date(i.verified_at).toLocaleString() : '-'}</td></tr>`).join('');
+}
+
+// ════════════════════════════════════════════════════════════
+// Players
+// ════════════════════════════════════════════════════════════
+async function searchPlayers() {
+  const q = $('player-query').value.trim();
+  if (q.length < 2) return status('Mínimo 2 caracteres', false);
+  const r = await api(`/v1/admin/players?q=${encodeURIComponent(q)}`);
+  $('players-body').innerHTML = r.data.items.map(i => `<tr><td><code style="font-size:.78rem">${esc(i.uuid)}</code></td><td>${esc(i.name)}</td><td>${i.verified_at ? new Date(i.verified_at).toLocaleString() : '-'}</td></tr>`).join('') || '<tr><td colspan="3" style="color:var(--dim);text-align:center;padding:1rem">Sin resultados</td></tr>';
+}
+
+// ════════════════════════════════════════════════════════════
+// Menu
+// ════════════════════════════════════════════════════════════
+async function loadMenu() {
+  const r = await api('/v1/admin/pause-menu/history');
+  if (r.data.items.length) {
+    $('menu-revision').textContent = r.data.items[0].revision;
+    $('menu-json').value = JSON.stringify(r.data.items[0].config, null, 2);
+    $('menu-json').dataset.revision = r.data.items[0].revision;
+  }
+  $('menu-history-body').innerHTML = r.data.items.map(i => `<tr>
+    <td>${i.revision}</td><td><code style="font-size:.72rem;color:var(--dim)">${JSON.stringify(i.config).slice(0,80)}...</code></td>
+    <td><button class="btn btn-sm btn-ghost" onclick="restoreMenu(${i.revision})">Restaurar</button></td>
+  </tr>`).join('');
+}
+async function saveMenu() {
+  try {
+    const config = JSON.parse($('menu-json').value);
+    const rev = Number($('menu-json').dataset.revision || 0);
+    const r = await api('/v1/admin/pause-menu', { method: 'PUT', body: JSON.stringify({ expectedRevision: rev, config }) });
+    if (r.status === 200) { status('Publicado', true); loadMenu(); } else status(r.data.error, false);
+  } catch { status('JSON inválido', false); }
+}
+async function restoreMenu(rev) {
+  const current = Number($('menu-json').dataset.revision || 0);
+  const r = await api('/v1/admin/pause-menu/restore', { method: 'POST', body: JSON.stringify({ expectedRevision: current, revision: rev }) });
+  if (r.status === 200) { status('Restaurado', true); loadMenu(); } else status(r.data.error, false);
+}
+
+// ════════════════════════════════════════════════════════════
+// Audit
+// ════════════════════════════════════════════════════════════
+async function loadAudit() {
+  const r = await api('/v1/admin/audit');
+  $('audit-body').innerHTML = r.data.items.map(i => `<tr>
+    <td>${i.id}</td><td>${esc(i.actor)}</td><td><code style="font-size:.75rem">${esc(i.action)}</code></td>
+    <td><code style="font-size:.72rem;color:var(--dim)">${i.payload.slice(0,60)}</code></td>
+    <td style="white-space:nowrap">${new Date(i.at).toLocaleString()}</td>
+  </tr>`).join('');
+}
+
+// ════════════════════════════════════════════════════════════
+// Init
+// ════════════════════════════════════════════════════════════
+(async () => {
+  if (token && adminUser) {
+    const r = await api('/v1/admin/accounts');
+    if (r.status === 200) showPanel(); else showLogin();
+  } else showLogin();
+})();
+</script>
+</body>
+</html>
