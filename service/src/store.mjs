@@ -308,8 +308,8 @@ export class Store {
   saveResourceFileMcmeta(id, name, mcmetaPath, mcmetaSize) {
     id = cosmeticId(id);
     requireThat(/^[a-z0-9_]{1,32}$/.test(name), 'Nombre de archivo inválido');
-    this.db.prepare('UPDATE resource_files SET mcmeta_path=?, mcmeta_size=? WHERE cosmetic_id=? AND name=?')
-      .run(mcmetaPath, mcmetaSize, id, name);
+    this.db.prepare('UPDATE resource_files SET mcmeta_path=?, mcmeta_size=?, uploaded_at=? WHERE cosmetic_id=? AND name=?')
+      .run(mcmetaPath, mcmetaSize, Date.now(), id, name);
     return this.getResourceFile(id, name);
   }
 

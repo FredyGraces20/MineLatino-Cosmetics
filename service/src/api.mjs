@@ -109,7 +109,8 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
           const resource = store.getResource(item.id);
           const files = store.getResourceFiles(item.id);
           const hasTexture = !!resource?.file_path || files.length > 0;
-          const hashSource = resource?.sha256 || files.find(f => f.name === 'texture')?.sha256 || files[0]?.sha256 || resource?.model_sha256;
+          const hashSource = createHash('sha256').update(JSON.stringify([resource?.sha256, resource?.model_sha256,
+            files.map(f => [f.name, f.sha256, f.uploaded_at, f.mcmeta_path, f.mcmeta_size])])).digest('hex');
           return { ...item, ...store.product(item.id), hasTexture, hasModel: !!resource?.model_path,
             textureCount: files.length,
             resourceVersion: hashSource ? hashSource.slice(0, 12) : String(item.revision) };
@@ -132,6 +133,10 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
         }
         const typeParam = url.searchParams.get('type');
         const fileName = url.searchParams.get('file');
+        if (typeParam === 'manifest') {
+          const files = store.getResourceFiles(id).map(f => ({ name: f.name, hasMcmeta: !!f.mcmeta_path }));
+          return Response.json({ files, hasLegacy: !!res.file_path }, { headers: { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
+        }
         // Serve model JSON if requested via query param
         if (typeParam === 'model') {
           requireThat(res.model_path, 'Modelo no disponible', 404);
@@ -372,7 +377,7 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
             const legacyRes = store.getResource(id);
             if (legacyRes?.file_path) {
               const legacyPath = join(resourceDir, legacyRes.file_path);
-              if (existsSync(legacyPath)) unlinkSync(legacyPath);
+              if (legacyPath !== join(resourceDir, filePath) && existsSync(legacyPath)) unlinkSync(legacyPath);
             }
             store.saveResource(id, filePath, sha256, buffer.length, 'image/png');
           }

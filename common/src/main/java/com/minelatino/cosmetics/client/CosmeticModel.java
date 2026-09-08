@@ -51,7 +51,17 @@ public final class CosmeticModel {
                 int turn = f.has("rotation") ? f.get("rotation").getAsInt() : 0;
                 if (turn < 0 || turn > 270 || turn % 90 != 0)
                     throw new IllegalArgumentException("Face rotation must be 0, 90, 180 or 270");
-                faces.add(new ModelFace(direction, vector(f, "uv", defaultUv(direction, from, to), 4), turn));
+                if (f.has("texture") && f.get("texture").isJsonNull()) continue;
+                String reference = f.has("texture") ? f.get("texture").getAsString() : "";
+                var visited = new java.util.HashSet<String>();
+                while (reference.startsWith("#")) {
+                    if (!visited.add(reference) || !root.has("textures") || !root.getAsJsonObject("textures").has(reference.substring(1)))
+                        throw new IllegalArgumentException("Unresolved texture: " + reference);
+                    reference = root.getAsJsonObject("textures").get(reference.substring(1)).getAsString();
+                }
+                String texture = reference.substring(reference.lastIndexOf('/') + 1).replaceFirst("\\.png$", "");
+                if (!texture.isEmpty() && !texture.matches("[a-z0-9_]{1,32}")) throw new IllegalArgumentException("Invalid texture name");
+                faces.add(new ModelFace(direction, vector(f, "uv", defaultUv(direction, from, to), 4), turn, texture));
             }
             elements.add(new ModelElement(from, to, rotation, List.copyOf(faces)));
         }
@@ -98,8 +108,8 @@ public final class CosmeticModel {
     }
     public record ModelElement(float[] from, float[] to, Rotation rotation, List<ModelFace> faces) {}
     public record Rotation(float[] origin, float angle, String axis, boolean rescale) {}
-    public record ModelFace(String direction, float[] uv, int rotation) {}
-    public record Quad(float[] v0, float[] v1, float[] v2, float[] v3, float[] normal) {}
+    public record ModelFace(String direction, float[] uv, int rotation, String texture) {}
+    public record Quad(float[] v0, float[] v1, float[] v2, float[] v3, float[] normal, String texture) {}
 
     public static List<Quad> generateQuads(ModelElement e, float ox, float oy, float oz) {
         float x1=e.from()[0], y1=e.from()[1], z1=e.from()[2];
@@ -131,7 +141,7 @@ public final class CosmeticModel {
             float bx=c[0]-a[0], by=c[1]-a[1], bz=c[2]-a[2];
             float nx=ay*bz-az*by, ny=az*bx-ax*bz, nz=ax*by-ay*bx;
             float length=(float)Math.sqrt(nx*nx+ny*ny+nz*nz);
-            if (length > 0) result.add(new Quad(a,b,c,vertices[3],new float[]{nx/length,ny/length,nz/length}));
+            if (length > 0) result.add(new Quad(a,b,c,vertices[3],new float[]{nx/length,ny/length,nz/length},face.texture()));
         }
         return result;
     }

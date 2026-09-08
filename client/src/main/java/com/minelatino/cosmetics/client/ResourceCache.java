@@ -35,6 +35,7 @@ public final class ResourceCache {
     private final Path cacheDir;
     private final Map<String, ResourceLocation> textures = new ConcurrentHashMap<>();
     private final Map<String, CosmeticModel> models = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, Material>> materials = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<CachedResource>> pending = new ConcurrentHashMap<>();
     private final Map<String, Long> nextRefresh = new ConcurrentHashMap<>();
     private volatile long generation;
@@ -44,7 +45,11 @@ public final class ResourceCache {
     public boolean isLoading(String id) { return pending.containsKey(id); }
     public void retry(String id) { nextRefresh.remove(id); errors.remove(id); }
 
-    public record CachedResource(ResourceLocation texture, CosmeticModel model) {}
+    public record Material(ResourceLocation texture, TextureAnimation animation) {}
+    public record CachedResource(ResourceLocation texture, CosmeticModel model, Map<String, Material> materials) {}
+    private CachedResource cached(String id, ResourceLocation texture, CosmeticModel model) {
+        return new CachedResource(texture, model, materials.getOrDefault(id, Map.of()));
+    }
 
     public ResourceCache(String baseUrl, Path cacheDir) {
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
@@ -63,7 +68,7 @@ public final class ResourceCache {
         CosmeticModel model = models.get(cosmeticId);
         long now = System.currentTimeMillis();
         if (now < nextRefresh.getOrDefault(cosmeticId, 0L))
-            return tex == null ? null : new CachedResource(tex, model);
+            return tex == null ? null : cached(cosmeticId, tex, model);
 
         long requestGeneration = generation;
         pending.computeIfAbsent(cosmeticId, id -> CompletableFuture.supplyAsync(() -> {
@@ -85,7 +90,7 @@ public final class ResourceCache {
                 pending.remove(cosmeticId);
                 nextRefresh.put(cosmeticId, now + (res == null ? 15_000 : 60_000));
                 if (res != null) errors.remove(cosmeticId);
-                return res != null ? res : (tex == null ? null : new CachedResource(tex, model));
+                return res != null ? res : (tex == null ? null : cached(cosmeticId, tex, model));
             } catch (Exception e) {
                 pending.remove(cosmeticId);
                 nextRefresh.put(cosmeticId, now + 15_000);
@@ -94,7 +99,7 @@ public final class ResourceCache {
             }
         }
         // Return partial result if available
-        if (tex != null) return new CachedResource(tex, model);
+        if (tex != null) return cached(cosmeticId, tex, model);
         return null;
     }
 
@@ -116,7 +121,16 @@ public final class ResourceCache {
 
     // ── Download (background thread) ──────────────────────────────────────
 
-    private record DownloadData(byte[] texturePng, CosmeticModel model) {}
+    private record TextureData(byte[] png, String mcmeta) {}
+    private record DownloadData(byte[] texturePng, CosmeticModel model, Map<String, TextureData> materials) {}
+
+    private byte[] download(String id, String query) throws Exception {
+        var response = http.send(HttpRequest.newBuilder(URI.create(baseUrl + "/v1/resources/" + id + "?" + query))
+                .timeout(TIMEOUT).GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+        if (response.statusCode() != 200 || response.body().length > 2*1024*1024)
+            throw new IOException("Missing/invalid cosmetic resource " + query + " HTTP " + response.statusCode());
+        return response.body();
+    }
 
     private DownloadData downloadBoth(String cosmeticId) throws Exception {
         // Download texture PNG
@@ -152,7 +166,31 @@ public final class ResourceCache {
             throw new IOException("Model unavailable: HTTP " + modelRes.statusCode());
         }
 
-        return new DownloadData(textureData, model);
+        var named = new java.util.LinkedHashMap<String, TextureData>();
+        var names = model.quads.stream().map(CosmeticModel.Quad::texture).distinct().toList();
+        if (names.size() > 32) throw new IOException("Too many model textures");
+        if (!names.isEmpty()) {
+            var manifestResponse = http.send(HttpRequest.newBuilder(URI.create(baseUrl + "/v1/resources/" + cosmeticId + "?type=manifest&" + revision))
+                    .timeout(TIMEOUT).GET().build(), HttpResponse.BodyHandlers.ofString());
+            var files = new java.util.HashMap<String, Boolean>();
+            try {
+                var manifest = com.google.gson.JsonParser.parseString(manifestResponse.body()).getAsJsonObject();
+                for (var entry : manifest.getAsJsonArray("files")) {
+                    var file = entry.getAsJsonObject(); files.put(file.get("name").getAsString(), file.get("hasMcmeta").getAsBoolean());
+                }
+            } catch (RuntimeException e) {
+                if (names.size() > 1) throw new IOException("Update cosmetics service: texture manifest unavailable", e);
+            }
+            for (String name : names) {
+                if (files.containsKey(name)) {
+                    byte[] png = download(cosmeticId, "file="+name+"&"+revision);
+                    String meta = files.get(name) ? new String(download(cosmeticId,"file="+name+"&type=mcmeta&"+revision), StandardCharsets.UTF_8) : null;
+                    named.put(name, new TextureData(png, meta));
+                } else if (names.size() == 1) named.put(name, new TextureData(textureData,null));
+                else throw new IOException("Missing texture file: " + name + ". Upload PNG with this name.");
+            }
+        }
+        return new DownloadData(textureData, model, named);
     }
 
     // ── Registration (main thread) ────────────────────────────────────────
@@ -184,14 +222,38 @@ public final class ResourceCache {
         }
 
         if (texLoc == null) return null;
+        var loaded = new java.util.LinkedHashMap<String, Material>();
+        try {
+            for (var entry : data.materials().entrySet()) {
+                NativeImage image = NativeImage.read(new ByteArrayInputStream(entry.getValue().png()));
+                TextureAnimation animation;
+                try {
+                    if (image.getWidth() > 4096 || image.getHeight() > 4096) throw new IOException("Texture too large");
+                    animation = TextureAnimation.parse(entry.getValue().mcmeta(), image.getWidth(), image.getHeight());
+                } catch (Exception e) { image.close(); throw e; }
+                var location = ResourceLocation.fromNamespaceAndPath("minelatino_cosmetics", "cosmetics/"+cosmeticId+"/"+(entry.getKey().isEmpty()?"default":entry.getKey()));
+                Minecraft.getInstance().getTextureManager().register(location, new DynamicTexture(image));
+                Minecraft.getInstance().getTextureManager().getTexture(location).setFilter(false,false);
+                loaded.put(entry.getKey(), new Material(location,animation));
+            }
+        } catch (Exception e) {
+            loaded.values().forEach(m -> Minecraft.getInstance().getTextureManager().release(m.texture()));
+            throw new IllegalArgumentException("Could not prepare model textures", e);
+        }
+        var oldMaterials = materials.put(cosmeticId, Map.copyOf(loaded));
+        if (oldMaterials != null) oldMaterials.values().stream().filter(m -> loaded.values().stream().noneMatch(n -> n.texture().equals(m.texture())))
+                .forEach(m -> Minecraft.getInstance().getTextureManager().release(m.texture()));
         models.put(cosmeticId, model);
         CosmeticsDiagnostics.event("RESOURCE_READY",CosmeticsDiagnostics.id(cosmeticId)+" elements="+model.elements.size()+" quads="+model.quads.size());
-        return new CachedResource(texLoc, model);
+        return cached(cosmeticId, texLoc, model);
     }
 
     public void clear() {
         generation++;
         var oldTextures = java.util.List.copyOf(textures.values());
+        var oldMaterials = materials.values().stream().flatMap(m -> m.values().stream()).map(Material::texture).toList();
+        Minecraft.getInstance().execute(() -> oldMaterials.forEach(id -> Minecraft.getInstance().getTextureManager().release(id)));
+        materials.clear();
         Minecraft.getInstance().execute(() -> oldTextures.forEach(
                 id -> Minecraft.getInstance().getTextureManager().release(id)));
         textures.clear();

@@ -104,7 +104,7 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
 
             CosmeticModel model = res.model();
             if (model != null && !model.elements.isEmpty()) {
-                renderModel(poseStack, bufferSource, packedLight, renderState, res.texture(), model, item.slot());
+                renderModel(poseStack, bufferSource, packedLight, renderState, res, model, item.slot());
                 if(!model.quads.isEmpty()) submitted++;
             } else {
                 renderFallback(poseStack, bufferSource, packedLight, renderState, res.texture(), item.slot());
@@ -124,8 +124,7 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
 
     /** Renders a 3D model attached to the player. */
     private void renderModel(PoseStack poseStack, MultiBufferSource bufferSource, int packedLight,
-                             PlayerRenderState state, ResourceLocation texture, CosmeticModel model, String slot) {
-        VertexConsumer consumer = bufferSource.getBuffer(RenderType.entityCutout(texture));
+                             PlayerRenderState state, ResourceCache.CachedResource resource, CosmeticModel model, String slot) {
 
         poseStack.pushPose();
         try {
@@ -151,7 +150,16 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
                 poseStack.scale(1, -1, -1);
             }
             for (CosmeticModel.Quad quad : model.quads) {
-                renderQuad(consumer, poseStack, packedLight, quad);
+                var material = resource.materials().get(quad.texture());
+                var texture = material == null ? resource.texture() : material.texture();
+                VertexConsumer consumer = bufferSource.getBuffer(RenderType.entityCutout(texture));
+                if (material == null || (material.animation().rows() == 1 && material.animation().columns() == 1)) renderQuad(consumer, poseStack, packedLight, quad);
+                else {
+                    var a = material.animation();
+                    double ticks = System.nanoTime() / 50_000_000.0;
+                    renderQuad(consumer, poseStack, packedLight, new CosmeticModel.Quad(a.vertex(quad.v0(),ticks),a.vertex(quad.v1(),ticks),
+                            a.vertex(quad.v2(),ticks),a.vertex(quad.v3(),ticks),quad.normal(),quad.texture()));
+                }
             }
         } finally {
             poseStack.popPose();

@@ -354,6 +354,21 @@ function fixtureWithResources(t, options = {}) {
 // Minimal valid PNG (1x1 transparent pixel)
 const PNG_1x1 = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6200010000000500010d0a2db40000000049454e44ae426082', 'hex');
 
+test('replacing named primary texture preserves new file and exposes manifest', async t => {
+  const { store, request } = fixtureWithResources(t);
+  store.saveCosmetic('test-cape', catalog, 'admin');
+  for (let i=0;i<2;i++) {
+    const upload = await request('/v1/admin/cosmetics/catalog/test-cape/files/texture', {
+      method: 'PUT', token: ADMIN, headers: { 'X-Filename': 'texture.png' }, body: PNG_1x1,
+    });
+    assert.equal(upload.status, 200);
+    assert.equal((await request('/v1/resources/test-cape?file=texture')).status, 200);
+    assert.equal((await request('/v1/resources/test-cape')).status, 200);
+  }
+  const manifest = await request('/v1/resources/test-cape?type=manifest');
+  assert.deepEqual(manifest.data.files, [{ name: 'texture', hasMcmeta: false }]);
+});
+
 test('resource upload stores file with SHA-256 and serves it back', async t => {
   const { store, request } = fixtureWithResources(t);
   store.saveCosmetic('test-cape', catalog, 'admin');
