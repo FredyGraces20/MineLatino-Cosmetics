@@ -208,8 +208,8 @@
 	"gui_light": "front",
 	"display": {
 		"minelatino_backpack": {
-			"translation": [0, 22, 0.66875],
-			"scale": [0.8, 0.8, 0.8]
+			"translation": [0, 38.8, 0.66875],
+			"scale": [2, 2, 2]
 		},
 		"thirdperson_righthand": {
 			"rotation": [75, 45, 0],

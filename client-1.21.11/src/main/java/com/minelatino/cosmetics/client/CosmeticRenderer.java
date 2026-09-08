@@ -139,6 +139,8 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
                 getParentModel().body.translateAndRotate(poseStack);
                 poseStack.translate(0, 0.3, "BACKPACK".equals(slot) ? 0.30 : 0.16);
                 poseStack.scale(1, -1, -1);
+                // Keep 1.21.11 aligned with the 1.21.4 renderer for all back-mounted slots.
+                poseStack.mulPose(new Quaternionf().rotationY(CosmeticPlacement.backFacingYawRadians(slot)));
                 if ("BACKPACK".equals(slot)) {
                     ApiClient.TransformData serverBackpack = CosmeticsClient.instance().getTransform(cosmeticId, "backpack");
                     if (serverBackpack != null) {
@@ -173,6 +175,7 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
         }
     }
 
+    /** Applies a server-side transform after the back-facing base rotation. */
     private static void applyDisplayTransform(PoseStack poseStack, ApiClient.TransformData t) {
         poseStack.translate(-t.translation()[0]/16, t.translation()[1]/16, -t.translation()[2]/16);
         poseStack.mulPose(new Quaternionf().rotationXYZ(

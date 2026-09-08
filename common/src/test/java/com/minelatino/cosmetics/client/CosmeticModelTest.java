@@ -57,6 +57,15 @@ class CosmeticModelTest {
         assertArrayEquals(new float[3],model.head.rotation());
     }
 
+    @Test void backpackDisplayPreservesItsIntendedFullSize() {
+        String json=cube("north","", "");
+        json=json.substring(0,json.length()-1)+",\"display\":{\"minelatino_backpack\":{\"translation\":[0,38.8,0.66875],\"scale\":[2,2,2]}}}";
+        var model=CosmeticModel.parse(json);
+        assertArrayEquals(new float[]{0,38.8f,0.66875f}, model.backpack.translation());
+        assertArrayEquals(new float[]{2,2,2}, model.backpack.scale());
+        assertArrayEquals(new float[3], model.backpack.rotation());
+    }
+
     @Test void missingModelIsDifferentFromInvalidModel() {
         assertTrue(CosmeticModel.empty().quads.isEmpty());
         assertThrows(RuntimeException.class,()->CosmeticModel.parse("{}"));

@@ -153,6 +153,8 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
                 poseStack.translate(0, 0.3, "BACKPACK".equals(slot) ? 0.30 : 0.16);
                 // Java element models use Y-up; player ModelPart coordinates use Y-down.
                 poseStack.scale(1, -1, -1);
+                // Back-mounted Blockbench models otherwise show their front against the player's body.
+                poseStack.mulPose(new Quaternionf().rotationY(CosmeticPlacement.backFacingYawRadians(slot)));
                 if ("BACKPACK".equals(slot)) {
                     ApiClient.TransformData serverBackpack = CosmeticsClient.instance().getTransform(cosmeticId, "backpack");
                     if (serverBackpack != null) {
@@ -182,9 +184,8 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
         }
     }
 
-    /** Applies a server-side transform (translation in 0-16 space, rotation in degrees, scale).
-     *  The scale(1,-1,-1) coordinate flip inverts X/Z, so we negate those components
-     *  to match the launcher convention (which applies Ry(180) before the display transform). */
+    /** Applies a server-side transform after the back-facing base rotation.
+     *  X/Z are converted from the editor convention; scale remains absolute. */
     private static void applyDisplayTransform(PoseStack poseStack, ApiClient.TransformData t) {
         poseStack.translate(-t.translation()[0]/16, t.translation()[1]/16, -t.translation()[2]/16);
         poseStack.mulPose(new Quaternionf().rotationXYZ(
