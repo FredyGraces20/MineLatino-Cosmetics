@@ -3,6 +3,7 @@ package com.minelatino.cosmetics.client;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.model.PlayerModel;
+import net.minecraft.client.model.PlayerCapeModel;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
@@ -38,6 +39,8 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
     private static int renderCallCount = 0;
 
     private final ResourceCache resourceCache;
+    private final PlayerCapeModel<PlayerRenderState> capeModel =
+            new PlayerCapeModel<>(PlayerCapeModel.createCapeLayer().bakeRoot());
 
     public CosmeticRenderer(RenderLayerParent<PlayerRenderState, PlayerModel> parent, ResourceCache resourceCache) {
         super(parent);
@@ -236,11 +239,21 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
     /** Fallback: renders flat textured quads for cosmetics without 3D models. */
     private void renderFallback(PoseStack poseStack, MultiBufferSource bufferSource, int packedLight,
                                 PlayerRenderState state, ResourceLocation texture, String slot) {
+        if ("CAPE".equals(slot)) {
+            poseStack.pushPose();
+            try {
+                if (!state.chestEquipment.isEmpty()) poseStack.translate(0,-0.053125f,0.06875f);
+                getParentModel().copyPropertiesTo(capeModel);
+                capeModel.setupAnim(state);
+                capeModel.renderToBuffer(poseStack,bufferSource.getBuffer(RenderType.entitySolid(texture)),
+                        packedLight,OverlayTexture.NO_OVERLAY);
+            } finally { poseStack.popPose(); }
+            return;
+        }
         VertexConsumer consumer = bufferSource.getBuffer(RenderType.entityCutoutNoCull(texture));
         poseStack.pushPose();
         getParentModel().root().translateAndRotate(poseStack);
         try { switch (slot) {
-            case "CAPE" -> renderCape(poseStack, consumer, packedLight);
             case "HAT" -> renderHat(poseStack, consumer, packedLight);
             case "WINGS" -> renderWings(poseStack, consumer, packedLight);
             case "BACKPACK", "PET" -> {
@@ -252,16 +265,6 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
                         0, 1, 0, 1, 0, 0, -1);
             }
         } } finally { poseStack.popPose(); }
-    }
-
-    private void renderCape(PoseStack poseStack, VertexConsumer consumer, int packedLight) {
-        poseStack.pushPose();
-        getParentModel().body.translateAndRotate(poseStack);
-        poseStack.translate(0.0, 0.0, 0.14);
-        drawQuad(consumer, poseStack, packedLight,
-                -0.25f, 0.25f, 0.0f, 0.75f,
-                0.0f, 1.0f, 0.0f, 1.0f, 0, 0, -1);
-        poseStack.popPose();
     }
 
     private void renderHat(PoseStack poseStack, VertexConsumer consumer, int packedLight) {

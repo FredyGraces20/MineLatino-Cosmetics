@@ -3,6 +3,7 @@ package com.minelatino.cosmetics.client;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.model.player.PlayerModel;
+import net.minecraft.client.model.player.PlayerCapeModel;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
@@ -41,6 +42,7 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
             Collections.synchronizedMap(new WeakHashMap<>());
     private static int renderCallCount = 0;
     private final ResourceCache resourceCache;
+    private final PlayerCapeModel capeModel = new PlayerCapeModel(PlayerCapeModel.createCapeLayer().bakeRoot());
 
     public CosmeticRenderer(RenderLayerParent<AvatarRenderState, PlayerModel> parent, ResourceCache resourceCache) {
         super(parent);
@@ -227,13 +229,18 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
 
     private void renderFallback(PoseStack poseStack, SubmitNodeCollector collector, int packedLight,
                                 AvatarRenderState state, Identifier texture, String slot) {
+        if ("CAPE".equals(slot)) {
+            poseStack.pushPose();
+            try {
+                if (!state.chestEquipment.isEmpty()) poseStack.translate(0,-0.053125f,0.06875f);
+                collector.submitModel(capeModel,state,poseStack,RenderTypes.entitySolid(texture),packedLight,
+                        OverlayTexture.NO_OVERLAY,state.outlineColor,null);
+            } finally { poseStack.popPose(); }
+            return;
+        }
         poseStack.pushPose();
         getParentModel().root().translateAndRotate(poseStack);
         try { switch (slot) {
-            case "CAPE" -> collector.submitCustomGeometry(poseStack, RenderTypes.entityCutoutNoCull(texture), (pose, c) -> {
-                getParentModel().body.translateAndRotate(new PoseStack()); // no-op for pose context
-                drawQuad(c, pose, packedLight, -0.25f, 0.25f, 0.0f, 0.75f, 0.0f, 1.0f, 0.0f, 1.0f, 0, 0, -1);
-            });
             case "HAT" -> collector.submitCustomGeometry(poseStack, RenderTypes.entityCutoutNoCull(texture), (pose, c) -> {
                 drawQuad(c, pose, packedLight, -0.3f, 0.3f, -0.3f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0, 0, -1);
             });

@@ -4,7 +4,7 @@ param([switch]$SkipBuild, [switch]$SkipGithub)
 
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
-$version = '0.1.0-alpha.12'
+$version = '0.1.0-alpha.13'
 $mcVersion = '1.21.4'
 $repo = 'FredyGraces20/MineLatino-Cosmetics'
 $tag = "v$version"
