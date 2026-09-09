@@ -1,0 +1,13 @@
+.git
+.gradle
+**/build
+release-artifacts
+client
+client-1.21.11
+common
+fabric
+forge
+gradle
+docs
+examples
+tools
