@@ -10,13 +10,15 @@ subprojects {
     tasks.withType(Test).configureEach { useJUnitPlatform() }
 }
 
-// Auto-copy JARs to local Minecraft instance after build
-def instanceModsDir = file("E:/.minecraftx/instances/Minecraft 1.21.4 fabric/mods")
-
 task deployToLocal(dependsOn: [':fabric:build']) {
     group = 'deployment'
     description = 'Copies the Fabric JAR to the local Fabric instance (never installs Forge there)'
     doLast {
+        def configuredModsDir = project.findProperty('localInstanceModsDir')?.toString()
+        if (!configuredModsDir && !System.getProperty('os.name').toLowerCase().contains('windows')) {
+            throw new GradleException('Set -PlocalInstanceModsDir=/path/to/instance/mods before using deployToLocal outside Windows')
+        }
+        def instanceModsDir = file(configuredModsDir ?: 'E:/.minecraftx/instances/Minecraft 1.21.4 fabric/mods')
         def modPrefix = "minelatino-cosmetics-fabric-"
         def mcVersion = project.findProperty('mcVersion') ?: '1.21.4'
         if (mcVersion != '1.21.4') throw new GradleException('This local instance is Minecraft 1.21.4 only')
