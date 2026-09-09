@@ -41,9 +41,9 @@ public final class AuthManager {
     }
 
     /**
-     * Runs the full premium verification flow off-thread.
-     * If premium is disabled on the backend (development mode), uses offline auth
-     * which creates a session based on the local player's profile UUID.
+     * Runs the full premium verification flow off-thread. There is deliberately
+     * no UUID/nickname fallback: only Mojang's hasJoined response can establish
+     * the owner of cosmetics.
      * Returns a future that completes with the session on success, or
      * completes exceptionally if any step fails.
      */
@@ -61,43 +61,27 @@ public final class AuthManager {
         pendingAuth = CompletableFuture.supplyAsync(() -> {
             try {
                 LOG.info("Attempting auth with backend URL: {}", api.getBaseUrl());
-                // Check if premium auth is enabled on the backend
-                boolean premiumAvailable;
                 try {
                     ApiClient.HealthResponse health = api.health();
-                    premiumAvailable = health.premiumEnabled();
-                    LOG.info("Backend health check: premiumEnabled={}", premiumAvailable);
+                    if (!health.premiumEnabled()) {
+                        throw new ApiClient.ApiException(503, "premium-auth-disabled");
+                    }
+                    LOG.info("Backend health check: premiumEnabled=true, offlineAuthEnabled={}", health.offlineAuthEnabled());
                 } catch (Exception e) {
                     LOG.warn("Health check failed, trying premium auth anyway. Error: {}", e.getMessage());
-                    premiumAvailable = true; // Assume premium if we can't check
                 }
 
-                if (premiumAvailable) {
-                    CosmeticsDiagnostics.event("AUTH_MODE","premium");
-                    // Premium flow: challenge -> joinServer -> verify
-                    ApiClient.ChallengeResponse challenge = api.challenge(username);
-                    joinServer(user, challenge.serverId());
-                    ApiClient.VerifyResponse verify = api.verify(challenge.challengeId());
-                    Session newSession = new Session(verify.token(), verify.uuid(), verify.name(), verify.expiresAt());
-                    this.session = newSession;
-                    this.state = State.CONNECTED;
-                    this.errorMessage = null;
-                    LOG.info("Premium verified: {} ({})", verify.name(), verify.uuid());
-                    CosmeticsDiagnostics.event("AUTH_CONNECTED","mode=premium sessionUuid="+CosmeticsDiagnostics.id(verify.uuid()));
-                    return newSession;
-                } else {
-                    CosmeticsDiagnostics.event("AUTH_MODE","offline/development; identity not verified by Mojang");
-                    // Offline/development flow: use local profile UUID directly
-                    LOG.info("Premium auth disabled on backend, using offline auth for {} ({})", username, profileId);
-                    ApiClient.VerifyResponse offline = api.offlineAuth(profileId, username);
-                    Session newSession = new Session(offline.token(), offline.uuid(), offline.name(), offline.expiresAt());
-                    this.session = newSession;
-                    this.state = State.CONNECTED;
-                    this.errorMessage = null;
-                    LOG.info("Offline session: {} ({})", offline.name(), offline.uuid());
-                    CosmeticsDiagnostics.event("AUTH_CONNECTED","mode=offline sessionUuid="+CosmeticsDiagnostics.id(offline.uuid()));
-                    return newSession;
-                }
+                CosmeticsDiagnostics.event("AUTH_MODE","premium-only");
+                ApiClient.ChallengeResponse challenge = api.challenge(username);
+                joinServer(user, challenge.serverId());
+                ApiClient.VerifyResponse verify = api.verify(challenge.challengeId());
+                Session newSession = new Session(verify.token(), verify.uuid(), verify.name(), verify.expiresAt());
+                this.session = newSession;
+                this.state = State.CONNECTED;
+                this.errorMessage = null;
+                LOG.info("Premium verified: {} ({})", verify.name(), verify.uuid());
+                CosmeticsDiagnostics.event("AUTH_CONNECTED","mode=premium sessionUuid="+CosmeticsDiagnostics.id(verify.uuid()));
+                return newSession;
             } catch (Exception e) {
                 this.state = State.ERROR;
                 CosmeticsDiagnostics.event("AUTH_FAILED",CosmeticsDiagnostics.failure(e));
@@ -142,7 +126,7 @@ public final class AuthManager {
             };
         }
         if (e instanceof AuthenticationException) {
-            return "Sesion offline o credenciales invalidas";
+            return "Se requiere una cuenta premium de Minecraft con una sesión válida";
         }
         if (e instanceof java.net.ConnectException || e instanceof java.net.http.HttpConnectTimeoutException) {
             return "No se pudo conectar con el servidor: " + e.getMessage();

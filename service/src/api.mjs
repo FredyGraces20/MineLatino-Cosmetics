@@ -66,7 +66,7 @@ function validateResourceFile(buffer, filename) {
   return ext;
 }
 
-export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 'http://127.0.0.1:8787', playerAuth = new PlayerAuth(), premiumEnabled = false, now = Date.now }) {
+export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 'http://127.0.0.1:8787', playerAuth = new PlayerAuth(), premiumEnabled = true, now = Date.now }) {
   requireThat(typeof adminToken === 'string' && adminToken.length >= 32, 'Configura una clave administrativa de al menos 32 caracteres');
   if (resourceDir) mkdirSync(resourceDir, { recursive: true });
   const rates = new Map();
@@ -548,7 +548,7 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
       }
 
       // ── Public routes ───────────────────────────────────────────────────
-      if (method === 'GET' && path === '/health') return json({ ok: true, premiumEnabled, stage: 'development-api' });
+      if (method === 'GET' && path === '/health') return json({ ok: true, premiumEnabled, offlineAuthEnabled: false, stage: 'premium-api' });
       if (method === 'GET' && path === '/v1/cosmetics/catalog') {
         const items = store.catalog(false, offset(url)).map(item => ({ ...item, hasResource: !!store.getResource(item.id) }));
         return json({ items });
@@ -561,16 +561,10 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
         return json({ players: ids.map(id => ({ uuid: id, equipped: store.appearance(id) })) });
       }
       if (path.startsWith('/v1/auth/') || path.startsWith('/v1/cosmetics/me/')) {
-        // Offline auth endpoint: works only when premium is disabled (development mode)
+        // Never trust a UUID supplied by the client. Cosmetics ownership and
+        // equipment are available only after Mojang/Microsoft session proof.
         if (method === 'POST' && path === '/v1/auth/offline') {
-          requireThat(!premiumEnabled, 'Auth offline solo disponible en modo desarrollo', 403);
-          const input = await body(request);
-          requireThat(input.uuid && input.name, 'UUID y nombre requeridos', 400);
-          requireThat(/^[0-9a-f]{32}$/i.test(input.uuid) || /^[0-9a-f-]{36}$/i.test(input.uuid), 'UUID inválido', 400);
-          const cleanUuid = input.uuid.replace(/-/g, '');
-          const offlineSession = playerAuth.createOfflineSession(cleanUuid, input.name);
-          store.verifiedPlayer(cleanUuid, input.name);
-          return json(offlineSession, 200);
+          throw new ApiError(403, 'Los cosméticos requieren una cuenta premium verificada con Mojang/Microsoft');
         }
         // Premium-only auth endpoints (challenge/verify)
         if (path.startsWith('/v1/auth/challenge') || path.startsWith('/v1/auth/verify')) {
@@ -581,7 +575,8 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
           const session = await playerAuth.complete((await body(request)).challengeId);
           store.verifiedPlayer(session.uuid, session.name); return json(session);
         }
-        // Session-based endpoints: work in both premium and offline mode
+        // Session-based endpoints accept only sessions created by the premium
+        // challenge/verify flow above.
         const owner = playerAuth.player(authorization);
         if (method === 'POST' && path === '/v1/auth/logout') { playerAuth.logout(authorization); return json({ ok: true }); }
         if (method === 'GET' && path === '/v1/cosmetics/me/wardrobe') return json(store.wardrobe(owner));

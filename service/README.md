@@ -71,17 +71,19 @@ La referencia identifica una operación, no una compra verificada. Repetir exact
 la misma operación no cambia nada; reutilizar su referencia para otra operación
 devuelve 409. Una nueva entrega tras revocación exige una referencia nueva.
 Una asignación manual a un UUID **no acredita que sea premium**. Si aún no hay
-verificación, el nick y `verified_at` aparecen como `null`.
+verificación, el nick y `verified_at` aparecen como `null`; el jugador no puede
+abrir una sesión cosmética hasta demostrar esa identidad ante Mojang.
 
 Menú: `{"expectedRevision":0,"config":{...}}`, usando el esquema del mod.
 Restauración: `{"expectedRevision":2,"revision":1}`. Conserva todas las revisiones.
 
-## Vinculación premium: implementada, gated y pendiente de prueba real
+## Vinculación premium obligatoria
 
-Desactivada por defecto. Las pruebas usan un verificador simulado; **no se ha
-autenticado una cuenta real ni integrado este flujo en los JAR**.
+Está activada por defecto e integrada en los JAR. El servicio no contiene un
+bypass por UUID o nickname. `COSMETICS_ENABLE_PREMIUM=false` detiene el inicio
+de sesión de jugadores, pero nunca habilita cuentas offline.
 
-Con `COSMETICS_ENABLE_PREMIUM=true`, el flujo previsto es:
+El flujo es:
 
 1. POST `/v1/auth/challenge` con `{"username":"NombreMinecraft"}`.
 2. El mod llama a `MinecraftSessionService.joinServer` de authlib con su sesión de
@@ -99,7 +101,8 @@ Con `COSMETICS_ENABLE_PREMIUM=true`, el flujo previsto es:
 
 No hay parámetro UUID que permita elegir otro propietario al equipar. Los desafíos
 caducan en 60 segundos y se consumen antes de consultar Mojang, incluso si la
-consulta falla. Para reintentar se pide uno nuevo. No habilitar un bypass offline.
+consulta falla. Para reintentar se pide uno nuevo. `/v1/auth/offline` siempre
+responde `403`, incluso cuando la autenticación premium está detenida.
 
 ## Límites de la entrega
 

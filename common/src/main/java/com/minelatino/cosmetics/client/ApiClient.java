@@ -65,26 +65,6 @@ public final class ApiClient implements WardrobeController.Gateway {
         );
     }
 
-    /**
-     * Offline authentication for development mode.
-     * Creates a session based on the client-provided UUID and name.
-     * Only works when premiumEnabled=false on the backend.
-     */
-    public VerifyResponse offlineAuth(String uuid, String name) throws Exception {
-        JsonObject body = new JsonObject();
-        body.addProperty("uuid", uuid);
-        body.addProperty("name", name);
-        HttpResponse<String> response = post("/v1/auth/offline", body.toString(), null);
-        if (response.statusCode() != 200) throw new ApiException(response.statusCode(), "offline-auth");
-        JsonObject json = GSON.fromJson(response.body(), JsonObject.class);
-        return new VerifyResponse(
-            json.get("token").getAsString(),
-            json.get("expiresAt").getAsLong(),
-            json.get("uuid").getAsString(),
-            json.get("name").getAsString()
-        );
-    }
-
     public void logout(String token) throws Exception {
         HttpResponse<String> response = post("/v1/auth/logout", "{}", token);
         if (response.statusCode() != 200) throw new ApiException(response.statusCode(), "logout");
@@ -129,7 +109,7 @@ public final class ApiClient implements WardrobeController.Gateway {
 
     // ── Health ────────────────────────────────────────────────────────
 
-    public record HealthResponse(boolean ok, boolean premiumEnabled, String stage) {}
+    public record HealthResponse(boolean ok, boolean premiumEnabled, boolean offlineAuthEnabled, String stage) {}
 
     public HealthResponse health() throws Exception {
         HttpResponse<String> response = get("/health", null);

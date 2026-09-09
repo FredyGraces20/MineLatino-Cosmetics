@@ -64,17 +64,4 @@ export class PlayerAuth {
     this.player(header);
     this.sessions.delete(hash(header.slice(7)).toString('hex'));
   }
-  /**
-   * Creates a session directly without Mojang verification.
-   * Only for development mode (premiumEnabled=false).
-   */
-  createOfflineSession(cleanUuid, name) {
-    this.prune();
-    requireThat(typeof name === 'string' && /^[a-zA-Z0-9_]{3,16}$/.test(name), 'Nombre de Minecraft inválido');
-    requireThat(this.sessions.size < 10_000, 'Demasiadas sesiones', 503);
-    const owner = uuid(cleanUuid);
-    const token = randomBytes(32).toString('base64url'), expiresAt = this.now() + 15 * 60_000;
-    this.sessions.set(hash(token).toString('hex'), { uuid: owner, expiresAt });
-    return { token, expiresAt, uuid: owner, name };
-  }
 }

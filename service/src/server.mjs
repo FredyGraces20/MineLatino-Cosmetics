@@ -19,7 +19,10 @@ const store = new Store(dbPath);
 const origin = process.env.COSMETICS_ORIGIN || `http://127.0.0.1:${port}`;
 const adminAuth = new AdminAuth({ store, bootstrapToken: adminToken });
 const publicDir = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'public');
-const api = createApi({ store, adminToken, adminAuth, resourceDir, origin, premiumEnabled: process.env.COSMETICS_ENABLE_PREMIUM === 'true' });
+// Premium is secure-by-default. Setting the flag to false can temporarily stop
+// premium login during an incident, but never enables an offline UUID bypass.
+const premiumEnabled = process.env.COSMETICS_ENABLE_PREMIUM !== 'false';
+const api = createApi({ store, adminToken, adminAuth, resourceDir, origin, premiumEnabled });
 const server = createHttpServer(api, origin, publicDir);
 const host = process.env.HOST || '127.0.0.1';
 server.listen(port, host, () => console.log(`MineLatino Cosmetics API: http://${host}:${port}`));

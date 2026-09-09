@@ -15,8 +15,8 @@ ni el backend de producción y no publica actualizaciones automáticamente.
 - El armario informa que está desconectado: **no vende, no equipa ni renderiza cosméticos todavía**.
 - API local en [`service/`](service/README.md): catálogo persistente, asignaciones,
   revocaciones, propietarios, auditoría y versiones del menú ESC. Tiene 23 pruebas.
-- Flujo de verificación premium del backend implementado y desactivado por defecto,
-  pendiente de conexión y prueba real con el mod. No hay panel web todavía.
+- Autenticación premium obligatoria mediante el `serverId` de Mojang/Microsoft.
+  El backend no acepta sesiones offline ni UUID enviados por el cliente como identidad.
 
 ## Compilar
 
@@ -54,7 +54,7 @@ configuración versionada y validada con esta misma política.
 
 ## Próximas entregas
 
-1. Conectar y validar en Minecraft la autenticación premium y las sesiones de la API local.
+1. Validar el flujo premium en producción con varios clientes y servidores con forwarding moderno.
 2. Panel web protegido: catálogo, asignaciones por UUID, propietarios y auditoría.
 3. Catálogo y equipamiento dentro del armario; caché, descarga con límites e integridad.
 4. Capas y sombreros renderizados, sincronización entre dos clientes, invisibilidad y rendimiento.

@@ -166,9 +166,18 @@ test('catalog and owner queries are bounded and paginated', t => {
   for (let i = 0; i < 55; i++) store.saveCosmetic(`cape-${String(i).padStart(2, '0')}`, catalog, 'admin');
   assert.equal(store.catalog(false).length, 50); assert.equal(store.catalog(false, 50).length, 5);
 });
-test('premium verification is disabled by default in deployment configuration', async t => {
+test('disabling premium never enables client-supplied UUID authentication', async t => {
   const { request } = fixture(t, { premiumEnabled: false });
   assert.equal((await request('/v1/auth/challenge', { method: 'POST', data: { username: 'TestPlayer' } })).status, 503);
+  assert.equal((await request('/v1/auth/offline', { method: 'POST', data: { uuid: OWNER, name: 'TestPlayer' } })).status, 403);
+});
+test('premium authentication is secure by default', async t => {
+  const store = new Store(); t.after(() => store.close());
+  const api = createApi({ store, adminToken: ADMIN });
+  const health = await (await api(new Request('http://127.0.0.1:8787/health'))).json();
+  assert.equal(health.premiumEnabled, true);
+  assert.equal(health.offlineAuthEnabled, false);
+  assert.equal(health.stage, 'premium-api');
 });
 test('logout invalidates a player session immediately', async t => {
   const { request, login } = fixture(t); const token = await login();
