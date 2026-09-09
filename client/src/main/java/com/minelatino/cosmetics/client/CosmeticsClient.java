@@ -42,6 +42,10 @@ public final class CosmeticsClient {
     /** Tracks whether an async equipment refresh is in progress. */
     private volatile boolean refreshing = false;
 
+    /** Auto-reconnect: retry auth when the session expires. */
+    private long lastReconnectAttempt = 0;
+    private static final long RECONNECT_COOLDOWN = 30_000; // 30 seconds between attempts
+
     private CosmeticsClient(String backendUrl, Path cacheDir) {
         this.api = new ApiClient(backendUrl);
         this.auth = new AuthManager(api);
@@ -97,6 +101,27 @@ public final class CosmeticsClient {
                         formatUuid(auth.session().uuid())));
             } catch (IllegalArgumentException ignored) {
                 LOG.warn("Ignoring invalid verified session UUID for local cosmetics");
+            }
+        }
+
+        // Auto-reconnect: when the session expires or auth is in error/disconnected
+        // state (and was previously connected), retry authentication silently.
+        if (mc.player != null && !auth.isConnected() && auth.state() != AuthManager.State.AUTHENTICATING) {
+            long now2 = System.currentTimeMillis();
+            if (now2 - lastReconnectAttempt >= RECONNECT_COOLDOWN) {
+                lastReconnectAttempt = now2;
+                LOG.info("Session expired or disconnected, attempting auto-reconnect...");
+                CosmeticsDiagnostics.event("AUTO_RECONNECT", "state=" + auth.state());
+                auth.authenticate().whenComplete((session, error) -> {
+                    if (error != null) {
+                        LOG.warn("Auto-reconnect failed: {}", auth.errorMessage());
+                        CosmeticsDiagnostics.event("AUTO_RECONNECT_FAILED", CosmeticsDiagnostics.failure(error));
+                    } else {
+                        LOG.info("Auto-reconnect successful: {} ({})", session.name(), session.uuid());
+                        CosmeticsDiagnostics.event("AUTO_RECONNECT_OK", "sessionUuid=" + CosmeticsDiagnostics.id(session.uuid()));
+                        lastEquipmentRefresh = 0; // force equipment refresh on next tick
+                    }
+                });
             }
         }
 
