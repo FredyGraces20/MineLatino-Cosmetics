@@ -17,6 +17,7 @@ export function cosmeticId(value) {
   return value;
 }
 export const SLOTS = ['CAPE', 'HAT', 'WINGS', 'BACKPACK', 'PET'];
+export const TRANSFORM_SLOTS = ['cape', 'hat', 'wings', 'backpack', 'pet'];
 
 /** Check if hostname matches an allowed domain or any of its subdomains. */
 function isAllowedHost(hostname, allowedDomains) {
@@ -71,7 +72,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS admins(username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, password_salt TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'admin', created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS resources(cosmetic_id TEXT PRIMARY KEY REFERENCES cosmetics(id), file_path TEXT NOT NULL, sha256 TEXT NOT NULL, file_size INTEGER NOT NULL, content_type TEXT NOT NULL, uploaded_at INTEGER NOT NULL, model_path TEXT, model_sha256 TEXT, model_size INTEGER);
       CREATE TABLE IF NOT EXISTS resource_files(cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id), name TEXT NOT NULL, file_path TEXT NOT NULL, sha256 TEXT NOT NULL, file_size INTEGER NOT NULL, mcmeta_path TEXT, mcmeta_size INTEGER, uploaded_at INTEGER NOT NULL, PRIMARY KEY(cosmetic_id, name));
-      CREATE TABLE IF NOT EXISTS cosmetic_transforms(cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id), slot TEXT NOT NULL CHECK(slot IN ('head','backpack')), translation_x REAL DEFAULT 0, translation_y REAL DEFAULT 0, translation_z REAL DEFAULT 0, rotation_x REAL DEFAULT 0, rotation_y REAL DEFAULT 0, rotation_z REAL DEFAULT 0, scale_x REAL DEFAULT 1, scale_y REAL DEFAULT 1, scale_z REAL DEFAULT 1, updated_at INTEGER, PRIMARY KEY(cosmetic_id, slot));
+      CREATE TABLE IF NOT EXISTS cosmetic_transforms(cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id), slot TEXT NOT NULL CHECK(slot IN ('cape','hat','wings','backpack','pet')), translation_x REAL DEFAULT 0, translation_y REAL DEFAULT 0, translation_z REAL DEFAULT 0, rotation_x REAL DEFAULT 0, rotation_y REAL DEFAULT 0, rotation_z REAL DEFAULT 0, scale_x REAL DEFAULT 1, scale_y REAL DEFAULT 1, scale_z REAL DEFAULT 1, updated_at INTEGER, PRIMARY KEY(cosmetic_id, slot));
       CREATE TABLE IF NOT EXISTS pet_animations(cosmetic_id TEXT PRIMARY KEY REFERENCES cosmetics(id), animation_name TEXT NOT NULL, file_path TEXT, sha256 TEXT, file_size INTEGER, updated_at INTEGER NOT NULL);
       `);
     // Migration: ensure model columns exist (for databases that may have incomplete migration)
@@ -86,6 +87,7 @@ export class Store {
       this.db.prepare('ALTER TABLE resources ADD COLUMN model_size INTEGER').run();
     }
     this.migrateCosmeticSlots();
+    this.migrateCosmeticTransforms();
   }
   migrateCosmeticSlots() {
     const schema = this.db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='cosmetics'").get().sql;
@@ -106,6 +108,37 @@ export class Store {
           ALTER TABLE cosmetics_slots_v5 RENAME TO cosmetics;`);
         requireThat(this.db.prepare('PRAGMA foreign_key_check').all().length === 0, 'Migración de categorías: referencias inválidas', 500);
         this.db.exec('PRAGMA user_version=5');
+      });
+    } finally { this.db.exec('PRAGMA foreign_keys=ON'); }
+  }
+  migrateCosmeticTransforms() {
+    const schema = this.db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='cosmetic_transforms'").get().sql;
+    if (TRANSFORM_SLOTS.every(slot => schema.includes(`'${slot}'`))) {
+      if (this.db.prepare('PRAGMA user_version').get().user_version < 6) this.db.exec('PRAGMA user_version=6');
+      return;
+    }
+    // The original editor stored every body cosmetic as "backpack" and pets/hats as
+    // "head". Preserve those attempted adjustments while giving each catalog type its
+    // own independently addressable transform.
+    this.db.exec('PRAGMA foreign_keys=OFF');
+    try {
+      this.transaction(() => {
+        this.db.exec(`CREATE TABLE cosmetic_transforms_v6(cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id),
+          slot TEXT NOT NULL CHECK(slot IN ('cape','hat','wings','backpack','pet')),
+          translation_x REAL DEFAULT 0, translation_y REAL DEFAULT 0, translation_z REAL DEFAULT 0,
+          rotation_x REAL DEFAULT 0, rotation_y REAL DEFAULT 0, rotation_z REAL DEFAULT 0,
+          scale_x REAL DEFAULT 1, scale_y REAL DEFAULT 1, scale_z REAL DEFAULT 1,
+          updated_at INTEGER, PRIMARY KEY(cosmetic_id, slot));
+          INSERT INTO cosmetic_transforms_v6
+          SELECT t.cosmetic_id, lower(c.slot), t.translation_x, t.translation_y, t.translation_z,
+            t.rotation_x, t.rotation_y, t.rotation_z, t.scale_x, t.scale_y, t.scale_z, t.updated_at
+          FROM cosmetic_transforms t JOIN cosmetics c ON c.id=t.cosmetic_id
+          WHERE (c.slot IN ('HAT','PET') AND t.slot='head')
+             OR (c.slot IN ('CAPE','WINGS','BACKPACK') AND t.slot='backpack');
+          DROP TABLE cosmetic_transforms;
+          ALTER TABLE cosmetic_transforms_v6 RENAME TO cosmetic_transforms;`);
+        requireThat(this.db.prepare('PRAGMA foreign_key_check').all().length === 0, 'Migración de transforms: referencias inválidas', 500);
+        this.db.exec('PRAGMA user_version=6');
       });
     } finally { this.db.exec('PRAGMA foreign_keys=ON'); }
   }
@@ -393,8 +426,10 @@ export class Store {
 
   saveTransform(id, slot, transform, actor) {
     id = cosmeticId(id);
-    this.cosmetic(id); // verify exists
-    requireThat(['head', 'backpack'].includes(slot), 'Slot inválido (debe ser head o backpack)');
+    const item = this.cosmetic(id);
+    slot = slot === 'head' ? 'hat' : slot;
+    requireThat(TRANSFORM_SLOTS.includes(slot), 'Tipo de cosmético inválido');
+    requireThat(item.slot.toLowerCase() === slot, 'El transform debe coincidir con el tipo del cosmético', 409);
     requireThat(transform && typeof transform === 'object', 'Transform inválido');
     const t = Array.isArray(transform.translation) ? transform.translation : [0, 0, 0];
     const r = Array.isArray(transform.rotation) ? transform.rotation : [0, 0, 0];
@@ -416,11 +451,14 @@ export class Store {
     const result = {};
     for (const row of rows) {
       if (!result[row.cosmetic_id]) result[row.cosmetic_id] = {};
-      result[row.cosmetic_id][row.slot] = {
+      const value = {
         translation: [row.translation_x, row.translation_y, row.translation_z],
         rotation: [row.rotation_x, row.rotation_y, row.rotation_z],
         scale: [row.scale_x, row.scale_y, row.scale_z]
       };
+      result[row.cosmetic_id][row.slot] = value;
+      // alpha.14 and older request the legacy name for hats during the rolling update.
+      if (row.slot === 'hat') result[row.cosmetic_id].head = value;
     }
     return result;
   }

@@ -63,8 +63,47 @@ test('v4 slot migration preserves ownership and equipment and is idempotent', t 
   try {
     assert.equal(store.cosmetic('pet').slot, 'PET');
     assert.equal(store.appearance(OWNER)[0].cosmeticId, 'cape');
-    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 5);
+    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 6);
     assert.equal(store.db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
+  } finally { store.close(); }
+});
+
+test('all five cosmetic types persist independent transforms and reject mismatched types', t => {
+  const { store } = fixture(t);
+  for (const [id, catalogSlot, transformSlot] of [
+    ['hat', 'HAT', 'hat'], ['cape', 'CAPE', 'cape'], ['wings', 'WINGS', 'wings'],
+    ['pack', 'BACKPACK', 'backpack'], ['pet', 'PET', 'pet'],
+  ]) {
+    store.saveCosmetic(id, { ...catalog, name: id, slot: catalogSlot }, 'test');
+    const transform = { translation: [1, 2, 3], rotation: [4, 5, 6], scale: [1.1, 1.2, 1.3] };
+    assert.deepEqual(store.saveTransform(id, transformSlot, transform, 'test')[transformSlot].translation, [1, 2, 3]);
+  }
+  assert.deepEqual(Object.keys(store.getAllTransforms()).sort(), ['cape', 'hat', 'pack', 'pet', 'wings']);
+  assert.throws(() => store.saveTransform('cape', 'backpack', { translation: [0, 0, 0] }, 'test'), { status: 409 });
+});
+
+test('legacy head/backpack transforms migrate to each cosmetic catalog type', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'minelatino-transform-migration-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'test.sqlite'), old = new DatabaseSync(path);
+  old.exec(`CREATE TABLE cosmetics(id TEXT PRIMARY KEY, name TEXT NOT NULL,
+      slot TEXT NOT NULL CHECK(slot IN ('CAPE','HAT','WINGS','BACKPACK','PET')),
+      status TEXT NOT NULL CHECK(status IN ('draft','published','retired')), revision INTEGER NOT NULL);
+    CREATE TABLE cosmetic_transforms(cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id),
+      slot TEXT NOT NULL CHECK(slot IN ('head','backpack')),
+      translation_x REAL DEFAULT 0, translation_y REAL DEFAULT 0, translation_z REAL DEFAULT 0,
+      rotation_x REAL DEFAULT 0, rotation_y REAL DEFAULT 0, rotation_z REAL DEFAULT 0,
+      scale_x REAL DEFAULT 1, scale_y REAL DEFAULT 1, scale_z REAL DEFAULT 1,
+      updated_at INTEGER, PRIMARY KEY(cosmetic_id, slot));
+    INSERT INTO cosmetics VALUES('pet','Pet','PET','published',1),('cape','Cape','CAPE','published',1);
+    INSERT INTO cosmetic_transforms VALUES('pet','head',1,2,3,0,0,0,1,1,1,10),('cape','backpack',4,5,6,0,0,0,2,2,2,11);
+    PRAGMA user_version=5;`);
+  old.close();
+  const store = new Store(path);
+  try {
+    assert.deepEqual(store.getTransforms('pet').pet.translation, [1, 2, 3]);
+    assert.deepEqual(store.getTransforms('cape').cape.scale, [2, 2, 2]);
+    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 6);
   } finally { store.close(); }
 });
 function fixture(t, options = {}) {

@@ -2,12 +2,19 @@
   'use strict';
 
   const UNITS_PER_BLOCK = 16;
+  const SLOTS = Object.freeze(['hat', 'cape', 'wings', 'backpack', 'pet']);
   const BASES = Object.freeze({
     // Head transform is applied after head bone translateAndRotate (Y-up space, no flip).
     // Anchor at origin so stored values map directly to the mod's head bone coordinates.
-    head: Object.freeze({ position: [0, 0, 0], scale: [1, 1, 1], yaw: 0 }),
+    hat: Object.freeze({ position: [0, 0, 0], scale: [1, 1, 1], yaw: 0 }),
+    // Body-mounted cosmetics share the torso coordinate system, but capes/wings
+    // sit closer to the player than a backpack.
+    cape: Object.freeze({ position: [0, .3, .16], scale: [1, -1, -1], yaw: Math.PI }),
+    wings: Object.freeze({ position: [0, .3, .16], scale: [1, -1, -1], yaw: Math.PI }),
     // Mirrors CosmeticRenderer: body anchor + (0, .3, .30), Y/Z flip and 180° yaw.
     backpack: Object.freeze({ position: [0, .3, .30], scale: [1, -1, -1], yaw: Math.PI }),
+    // Mirrors the independent companion anchor and base scale in CosmeticRenderer.
+    pet: Object.freeze({ position: [.8, 1, 0], scale: [.55, -.55, -.55], yaw: 0 }),
   });
 
   const triple = (value, fallback) => Array.isArray(value) && value.length === 3
@@ -15,7 +22,9 @@
     : [...fallback];
 
   function normalizeSlot(slot) {
-    return slot === 'head' ? 'head' : 'backpack';
+    if (slot === 'head') return 'hat';
+    const value = String(slot || '').toLowerCase();
+    return SLOTS.includes(value) ? value : 'backpack';
   }
 
   function neutralTransform() {
@@ -35,7 +44,7 @@
   // Backpack slot: negate X/Z to match applyDisplayTransform convention.
   function toSceneTransform(transform, slot) {
     const value = normalizeTransform(transform);
-    const negateXZ = normalizeSlot(slot) !== 'head';
+    const negateXZ = normalizeSlot(slot) !== 'hat';
     const sx = negateXZ ? -1 : 1, sz = negateXZ ? -1 : 1;
     return {
       position: [sx * value.translation[0] / UNITS_PER_BLOCK, value.translation[1] / UNITS_PER_BLOCK, sz * value.translation[2] / UNITS_PER_BLOCK],
@@ -45,7 +54,7 @@
   }
 
   function fromSceneTransform(position, rotation, scale, slot) {
-    const negateXZ = normalizeSlot(slot) !== 'head';
+    const negateXZ = normalizeSlot(slot) !== 'hat';
     const sx = negateXZ ? -1 : 1, sz = negateXZ ? -1 : 1;
     return {
       translation: [sx * position[0] * UNITS_PER_BLOCK, position[1] * UNITS_PER_BLOCK, sz * position[2] * UNITS_PER_BLOCK],
@@ -61,6 +70,7 @@
 
   root.MineLatinoCosmeticEditor = Object.freeze({
     UNITS_PER_BLOCK,
+    SLOTS,
     normalizeSlot,
     neutralTransform,
     normalizeTransform,

@@ -1,6 +1,6 @@
 allprojects {
     group = 'com.minelatino.cosmetics'
-    version = '0.1.0-alpha.14'
+    version = '0.1.0-alpha.15'
     repositories { mavenCentral() }
 }
 subprojects {

@@ -228,9 +228,10 @@ function edView(side){if(side==='front')edOrbit.theta=Math.PI;else if(side==='si
 async function edLoadTransform(cosId,slot){edSetFields(edMath.neutralTransform());try{const r=await fetch('/v1/admin/cosmetics/transforms/'+cosId,{headers:{Authorization:'Bearer '+token}});if(!r.ok)throw new Error('No se pudo cargar la posición');const d=await r.json(),t=d.transforms?.[slot];if(t)edSetFields(t)}catch(e){edNotice(e.message,'err')}}
 async function edSave(){if(!edCosId)return;const slot=$('ed-slot').value,transform=edFields();try{const r=await fetch('/v1/admin/cosmetics/transforms/'+edCosId,{method:'PUT',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({slot,transform})});if(r.ok){edNotice('Posición guardada','ok');status('Transform guardado',true)}else{const d=await r.json();edNotice(d.error||'Error al guardar','err')}}catch(e){edNotice('Error de red','err')}}
 function edReset(){edSetFields(edMath.neutralTransform());edApplyToMesh();edNotice('Valores neutrales; pulsa Guardar para aplicarlos')}
-function edUseModelDefaults(){if(!edCosMesh)return;const slot=$('ed-slot').value,key=slot==='head'?'head':'minelatino_backpack',preset=edCosMesh.userData.modelDisplay?.[key];if(!preset)return edNotice('El JSON no contiene valores para este slot','err');edSetFields({translation:preset.translation,rotation:preset.rotation,scale:preset.scale});edApplyToMesh();edNotice('Valores de Blockbench cargados; pulsa Guardar','ok')}
+function edUseModelDefaults(){if(!edCosMesh)return;const slot=$('ed-slot').value,keys={hat:['minelatino_hat','head'],cape:['minelatino_cape','minelatino_backpack'],wings:['minelatino_wings','minelatino_backpack'],backpack:['minelatino_backpack'],pet:['minelatino_pet','head']}[slot]||[];const display=edCosMesh.userData.modelDisplay||{},key=keys.find(k=>display[k]),preset=key&&display[key];if(!preset)return edNotice('El JSON no contiene valores para '+edSlotLabel(slot),'err');edSetFields({translation:preset.translation,rotation:preset.rotation,scale:preset.scale});edApplyToMesh();edNotice('Valores de Blockbench ('+key+') cargados; pulsa Guardar','ok')}
 function edStartLoop(){if(edAnimFrame)cancelAnimationFrame(edAnimFrame);(function loop(){edAnimFrame=requestAnimationFrame(loop);edCamUpdate();edRenderer.render(edScene,edCam)})()}
-function edSlotForType(slot){return(slot==='HAT'||slot==='PET')?'head':'backpack'}
+function edSlotForType(slot){const value=String(slot||'BACKPACK').toLowerCase();return edMath.SLOTS.includes(value)?value:'backpack'}
+function edSlotLabel(slot){return({hat:'Cabeza',cape:'Capa',wings:'Alas',backpack:'Mochila',pet:'Mascota'})[slot]||slot}
 function edBuildControls(defaultSlot){
   $('ed-sidebar').innerHTML=`
 <div class="ed-side-section">
@@ -240,9 +241,9 @@ function edBuildControls(defaultSlot){
     <button data-mode="rotate" onclick="edSetMode('rotate')">↻ Rotar</button>
     <button data-mode="scale" onclick="edSetMode('scale')">⤡ Escalar</button>
   </div>
-  <div class="ed-slot-row"><label>Slot:</label><select id="ed-slot"><option value="head"${defaultSlot==='head'?' selected':''}>Cabeza</option><option value="backpack"${defaultSlot==='backpack'?' selected':''}>Mochila</option></select></div>
+  <div class="ed-slot-row"><label>Tipo:</label><select id="ed-slot" disabled>${edMath.SLOTS.map(slot=>`<option value="${slot}"${defaultSlot===slot?' selected':''}>${edSlotLabel(slot)}</option>`).join('')}</select></div>
   <div class="ed-view-bar"><button onclick="edView('front')">Frente</button><button onclick="edView('back')">Espalda</button><button onclick="edView('side')">Lado</button></div>
-  <p class="ed-help">La figura y el anclaje reproducen el espacio del mod. En mochila, un valor Y mayor mueve el modelo hacia abajo igual que en Minecraft.</p>
+  <p class="ed-help">El anclaje reproduce el tipo real del mod. Los cambios se guardan únicamente para ${edSlotLabel(defaultSlot).toLowerCase()} y se descargan sin recompilar el modelo.</p>
 </div>
 <div class="ed-side-section">
   <h3>Posición</h3>
@@ -263,7 +264,6 @@ function edBuildControls(defaultSlot){
   <button class="btn btn-gh" onclick="edReset()">Valores neutrales</button>
   <button class="btn btn-gh" onclick="edFitView();edStartLoop()">Centrar</button>
 </div>`;
-  $('ed-slot').addEventListener('change',async e=>{edApplySlot(e.target.value);await edLoadTransform(edCosId,e.target.value);edApplyToMesh();edFitView()});
 }
 async function openEditor(){const id=$('res-cos').value;if(!id)return status('Selecciona un cosm\u00e9tico primero en Recursos',false);edCosId=id;const item=catItems.find(i=>i.id===id),cosName=item?.name||id;$('ed-cos-name').textContent=cosName;try{edInitCanvas()}catch(e){return status('Editor 3D no disponible: '+e.message,false)}const defaultSlot=edSlotForType(item?.slot||'BACKPACK');edBuildControls(defaultSlot);$('ed-overlay').classList.remove('hidden');$('preview-ct').classList.add('hidden');document.body.style.overflow='hidden';requestAnimationFrame(()=>{const c=$('ed-canvas-box').querySelector('canvas');if(c&&edRenderer){const rc=c.getBoundingClientRect();edRenderer.setSize(rc.width,rc.height,false);edCam.aspect=rc.width/rc.height;edCam.updateProjectionMatrix()}edLoadMeshAndTransform(id,defaultSlot)})}
 async function edLoadMeshAndTransform(cosId,slot){edApplySlot(slot);await edLoadCosmetic(cosId);await edLoadTransform(cosId,slot);edApplyToMesh();if(edCosMesh){edTC.attach(edTransform);edFitView()}edStartLoop()}

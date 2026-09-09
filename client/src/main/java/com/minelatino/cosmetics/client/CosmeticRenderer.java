@@ -135,7 +135,7 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
             if ("HAT".equals(slot)) {
                 getParentModel().head.translateAndRotate(poseStack);
                 CustomHeadLayer.translateToHead(poseStack, CustomHeadLayer.Transforms.DEFAULT);
-                ApiClient.TransformData serverHead = CosmeticsClient.instance().getTransform(cosmeticId, "head");
+                ApiClient.TransformData serverHead = CosmeticsClient.instance().getTransform(cosmeticId, "hat");
                 if (serverHead != null) {
                     // Head slot: no X/Z negation — head bone translateAndRotate already produces Y-up space.
                     poseStack.translate(serverHead.translation()[0]/16, serverHead.translation()[1]/16, serverHead.translation()[2]/16);
@@ -157,6 +157,8 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
                 // Companion beside the player's feet, not attached to the animated head/body.
                 poseStack.translate(0.8, 1.0 + Math.sin(state.ageInTicks * 0.08) * 0.035, 0);
                 poseStack.scale(0.55f, -0.55f, -0.55f);
+                ApiClient.TransformData serverPet = CosmeticsClient.instance().getTransform(cosmeticId, "pet");
+                if (serverPet != null) applyDisplayTransform(poseStack, serverPet);
                 applyPetAnimation(poseStack,resource.petAnimation());
             } else {
                 getParentModel().body.translateAndRotate(poseStack);
@@ -165,16 +167,14 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
                 poseStack.scale(1, -1, -1);
                 // Back-mounted Blockbench models otherwise show their front against the player's body.
                 poseStack.mulPose(new Quaternionf().rotationY(CosmeticPlacement.backFacingYawRadians(slot)));
-                if ("BACKPACK".equals(slot)) {
-                    ApiClient.TransformData serverBackpack = CosmeticsClient.instance().getTransform(cosmeticId, "backpack");
-                    if (serverBackpack != null) {
-                        applyDisplayTransform(poseStack, serverBackpack);
-                    } else {
+                ApiClient.TransformData serverTransform = CosmeticsClient.instance().getTransform(cosmeticId, slot.toLowerCase());
+                if (serverTransform != null) {
+                    applyDisplayTransform(poseStack, serverTransform);
+                } else if ("BACKPACK".equals(slot)) {
                         var b = model.backpack;
                         poseStack.translate(-b.translation()[0]/16,b.translation()[1]/16,-b.translation()[2]/16);
                         poseStack.mulPose(new Quaternionf().rotationXYZ((float)Math.toRadians(-b.rotation()[0]),(float)Math.toRadians(b.rotation()[1]),(float)Math.toRadians(-b.rotation()[2])));
                         poseStack.scale(b.scale()[0],b.scale()[1],b.scale()[2]);
-                    }
                 }
             }
             for (CosmeticModel.Quad quad : model.quads) {

@@ -71,6 +71,7 @@ test('redesigned admin separates catalog, product data and 3D resources', () => 
   assert(html.includes('href="admin.css"'));
   assert(html.includes('data-tab="resources"'));
   assert(html.includes("edSlotForType(item?.slot||'BACKPACK')"), '3D editor must use the selected catalog item slot');
+  for (const slot of ['hat', 'cape', 'wings', 'backpack', 'pet']) assert(html.includes(`${slot}:`), `editor must label ${slot}`);
   assert(!html.includes("const cosSlot=$('cos-slot').value"), '3D editor must not use a stale product form slot');
   assert(html.includes('edUseModelDefaults()'), 'editor must offer the model display transform as a preset');
 });
@@ -91,4 +92,15 @@ test('backpack editor uses the torso anchor, Y/Z flip and back-facing yaw', () =
   assert.deepEqual(Array.from(base.position), [0, .3, .3]);
   assert.deepEqual(Array.from(base.scale), [1, -1, -1]);
   assert.equal(base.yaw, Math.PI);
+});
+
+test('editor exposes a distinct renderer-compatible anchor for every cosmetic type', () => {
+  const api = editor();
+  assert.deepEqual(Array.from(api.SLOTS), ['hat', 'cape', 'wings', 'backpack', 'pet']);
+  assert.deepEqual(Array.from(api.slotBase('cape').position), [0, .3, .16]);
+  assert.deepEqual(Array.from(api.slotBase('wings').position), [0, .3, .16]);
+  assert.deepEqual(Array.from(api.slotBase('pet').position), [.8, 1, 0]);
+  assert.deepEqual(Array.from(api.slotBase('pet').scale), [.55, -.55, -.55]);
+  assert.equal(api.slotBase('cape').yaw, Math.PI);
+  assert.equal(api.slotBase('pet').yaw, 0);
 });
