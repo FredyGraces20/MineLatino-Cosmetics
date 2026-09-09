@@ -35,18 +35,22 @@ test('admin preview shares Java UV units and separates face materials', () => {
 test('admin preview fetches each named texture, animates and retains bitmaps until disposal', async () => {
   let closed = 0;
   const requested = [];
+  const authorizations = [];
   const api = renderer({
-    fetch: async url => {
+    fetch: async (url, options) => {
       const u = new URL(url, 'https://fixture.invalid'); requested.push(u.searchParams.get('file'));
+      authorizations.push(options?.headers?.Authorization);
       if (u.searchParams.get('type') === 'manifest') return Response.json({ files: [{ name: 'main', hasMcmeta: false }, { name: 'bubbles', hasMcmeta: true }] });
       if (u.searchParams.get('type') === 'mcmeta') return Response.json({ animation: { frametime: 1.8 } });
       return new Response(new Uint8Array([1]));
     },
     createImageBitmap: async () => ({ width: 32, height: 384, close() { closed++; } }),
   });
-  const mesh = await api.createCosmeticMesh({ id: 'fixture' }, model, new AbortController().signal);
+  const mesh = await api.createCosmeticMesh({ id: 'fixture' }, model, new AbortController().signal,
+    { headers: { Authorization: 'Bearer admin-preview' } });
   assert.equal(mesh.material.length, 2);
   assert(requested.includes('main')); assert(requested.includes('bubbles'));
+  assert(authorizations.every(value => value === 'Bearer admin-preview'));
   assert.equal(closed, 0);
   mesh.onBeforeRender();
   assert.equal(mesh.material[1].map.repeat.y, 1/12);

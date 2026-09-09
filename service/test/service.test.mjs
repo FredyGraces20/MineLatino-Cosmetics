@@ -451,6 +451,19 @@ test('resource upload stores file with SHA-256 and serves it back', async t => {
   assert.ok(served.headers.get('cache-control').includes('immutable'));
 });
 
+test('draft resources require valid administrator authentication', async t => {
+  const { store, request } = fixtureWithResources(t);
+  store.saveCosmetic('draft-hat', { ...catalog, name: 'Draft hat', slot: 'HAT', status: 'draft' }, 'admin');
+  const upload = await request('/v1/admin/cosmetics/catalog/draft-hat/resource', {
+    method: 'PUT', token: ADMIN, headers: { 'X-Filename': 'draft.png' }, body: PNG_1x1,
+  });
+  assert.equal(upload.status, 200);
+  assert.equal((await request('/v1/resources/draft-hat')).status, 404);
+  assert.equal((await request('/v1/resources/draft-hat', { headers: { Origin: 'https://attacker.test' } })).status, 404);
+  assert.equal((await request('/v1/resources/draft-hat', { token: 'invalid' })).status, 404);
+  assert.equal((await request('/v1/resources/draft-hat', { token: ADMIN })).status, 200);
+});
+
 test('resource upload rejects non-PNG, oversized, and missing cosmetic', async t => {
   const { store, request } = fixtureWithResources(t);
   store.saveCosmetic('test-cape', catalog, 'admin');

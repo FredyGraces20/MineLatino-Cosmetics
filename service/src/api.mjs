@@ -130,9 +130,9 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
         const id = cosmeticId(resourceMatch[1]);
         const res = store.getResource(id);
         requireThat(res, 'Recurso no encontrado', 404);
-        if (request.headers.get('origin') && request.headers.get('origin') !== origin) {
-          requireThat(store.cosmetic(id).status === 'published', 'Recurso no publicado', 404);
-        }
+        const cosmetic = store.cosmetic(id);
+        const adminIdentity = authorization ? adminAuth?.resolve(authorization, adminToken) : null;
+        requireThat(cosmetic?.status === 'published' || adminIdentity, 'Recurso no publicado', 404);
         const typeParam = url.searchParams.get('type');
         const fileName = url.searchParams.get('file');
         if (typeParam === 'manifest') {

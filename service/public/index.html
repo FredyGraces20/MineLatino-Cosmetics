@@ -122,10 +122,11 @@ async function deletePetAnimation(){const id=$('res-cos').value;if(!id)return;co
 // Shared renderer: same face materials, Java UVs, rotations and animation as the launcher.
 async function loadAdminMesh(id, signal) {
   const product = { id, resourceVersion: Date.now().toString() };
-  const res = await fetch('/v1/resources/'+encodeURIComponent(id)+'?type=model&v='+product.resourceVersion, { signal });
+  const resourceOptions = { headers: { Authorization: 'Bearer '+token } };
+  const res = await fetch('/v1/resources/'+encodeURIComponent(id)+'?type=model&v='+product.resourceVersion, { ...resourceOptions, signal });
   if (!res.ok) throw new Error('No se pudo descargar el modelo');
   const model = await res.json();
-  const mesh = await MineLatinoCosmetics.createCosmeticMesh(product, model, signal);
+  const mesh = await MineLatinoCosmetics.createCosmeticMesh(product, model, signal, resourceOptions);
   mesh.userData.modelDisplay = model.display || {};
   return mesh;
 }
