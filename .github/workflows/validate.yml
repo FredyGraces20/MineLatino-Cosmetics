@@ -1,0 +1,38 @@
+name: Validate MineLatino Cosmetics
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: cosmetics-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: npm --prefix service test
+      - run: npm --prefix service run check
+
+  mod:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      - run: chmod +x gradlew
+      - name: Build Fabric and Forge 1.21.4
+        run: ./gradlew build -x test -PmcVersion=1.21.4 --no-daemon
+      - name: Build Fabric 1.21.11
+        run: ./gradlew :fabric:build -x test -PmcVersion=1.21.11 --no-daemon
