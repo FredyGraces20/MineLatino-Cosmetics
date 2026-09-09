@@ -209,6 +209,7 @@ async function edLoadCosmetic(cosId){
   try {
     const mesh=await loadAdminMesh(cosId,AbortSignal.timeout(15000));
     if(generation!==edRequest){MineLatinoCosmetics.disposeCosmeticMesh(mesh);return}
+    mesh.scale.y=-1;
     edCosMesh=mesh;edModelScale.add(mesh);
     edNotice('Modelo cargado','ok');
   }catch(e){edNotice('Error: '+e.message,'err')}
