@@ -72,6 +72,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS resources(cosmetic_id TEXT PRIMARY KEY REFERENCES cosmetics(id), file_path TEXT NOT NULL, sha256 TEXT NOT NULL, file_size INTEGER NOT NULL, content_type TEXT NOT NULL, uploaded_at INTEGER NOT NULL, model_path TEXT, model_sha256 TEXT, model_size INTEGER);
       CREATE TABLE IF NOT EXISTS resource_files(cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id), name TEXT NOT NULL, file_path TEXT NOT NULL, sha256 TEXT NOT NULL, file_size INTEGER NOT NULL, mcmeta_path TEXT, mcmeta_size INTEGER, uploaded_at INTEGER NOT NULL, PRIMARY KEY(cosmetic_id, name));
       CREATE TABLE IF NOT EXISTS cosmetic_transforms(cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id), slot TEXT NOT NULL CHECK(slot IN ('head','backpack')), translation_x REAL DEFAULT 0, translation_y REAL DEFAULT 0, translation_z REAL DEFAULT 0, rotation_x REAL DEFAULT 0, rotation_y REAL DEFAULT 0, rotation_z REAL DEFAULT 0, scale_x REAL DEFAULT 1, scale_y REAL DEFAULT 1, scale_z REAL DEFAULT 1, updated_at INTEGER, PRIMARY KEY(cosmetic_id, slot));
+      CREATE TABLE IF NOT EXISTS pet_animations(cosmetic_id TEXT PRIMARY KEY REFERENCES cosmetics(id), animation_name TEXT NOT NULL, file_path TEXT, sha256 TEXT, file_size INTEGER, updated_at INTEGER NOT NULL);
       `);
     // Migration: ensure model columns exist (for databases that may have incomplete migration)
     const columns = this.db.prepare("PRAGMA table_info(resources)").all().map(c => c.name);
@@ -288,6 +289,31 @@ export class Store {
     this.db.prepare('UPDATE resources SET model_path=?, model_sha256=?, model_size=? WHERE cosmetic_id=?')
       .run(modelPath, modelSha256, modelSize, id);
     return this.getResource(id);
+  }
+
+  savePetAnimation(id, animationName, filePath, sha256, fileSize, actor) {
+    id = cosmeticId(id);
+    const item = this.cosmetic(id);
+    requireThat(item.slot === 'PET', 'Las animaciones solo se pueden asignar a mascotas');
+    requireThat(typeof animationName === 'string' && /^[a-zA-Z0-9_.:-]{1,128}$/.test(animationName), 'Nombre de animación inválido');
+    this.db.prepare(`INSERT INTO pet_animations(cosmetic_id,animation_name,file_path,sha256,file_size,updated_at)
+      VALUES(?,?,?,?,?,?) ON CONFLICT(cosmetic_id) DO UPDATE SET animation_name=excluded.animation_name,
+      file_path=COALESCE(excluded.file_path,pet_animations.file_path),sha256=COALESCE(excluded.sha256,pet_animations.sha256),
+      file_size=COALESCE(excluded.file_size,pet_animations.file_size),updated_at=excluded.updated_at`)
+      .run(id, animationName, filePath, sha256, fileSize, Date.now());
+    this.audit(actor, 'pet.animation.save', { cosmeticId: id, animationName, fileSize });
+    return this.getPetAnimation(id);
+  }
+
+  getPetAnimation(id) {
+    return this.db.prepare('SELECT * FROM pet_animations WHERE cosmetic_id=?').get(cosmeticId(id));
+  }
+
+  deletePetAnimation(id, actor) {
+    const old = this.getPetAnimation(id);
+    if (old) this.db.prepare('DELETE FROM pet_animations WHERE cosmetic_id=?').run(cosmeticId(id));
+    if (old) this.audit(actor, 'pet.animation.delete', { cosmeticId: id });
+    return old;
   }
 
   getResource(id) {

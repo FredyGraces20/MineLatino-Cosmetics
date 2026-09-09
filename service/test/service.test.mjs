@@ -453,3 +453,25 @@ test('catalog includes resource info for admin and public views', async t => {
   const publicCatalog = await request('/v1/cosmetics/catalog');
   assert.equal(publicCatalog.data.items[0].hasResource, true);
 });
+
+test('pet animation can be uploaded, selected and distributed to the mod', async t => {
+  const { store, request } = fixtureWithResources(t);
+  store.saveCosmetic('test-pet', { ...catalog, name: 'Pet', slot: 'PET' }, 'admin');
+  store.saveResource('test-pet', 'pet.png', 'unused-in-this-test', 1, 'image/png');
+  const animation=Buffer.from(JSON.stringify({ animations: {
+    'animation.pet.idle': { loop: true, animation_length: 1, bones: { root: { rotation: [0, 0, 0] } } },
+    'animation.pet.spin': { loop: true, animation_length: 2, bones: { root: { rotation: { 0: [0, 0, 0], 2: [0, 360, 0] } } } },
+  }}));
+  const uploaded=await request('/v1/admin/cosmetics/catalog/test-pet/animation', {
+    method:'PUT',token:ADMIN,headers:{'X-Filename':'pet.animation.json','X-Animation-Name':'animation.pet.idle'},body:animation,
+  });
+  assert.equal(uploaded.status,200); assert.equal(uploaded.data.animation_name,'animation.pet.idle');
+  const selected=await request('/v1/admin/cosmetics/catalog/test-pet/animation', {
+    method:'PATCH',token:ADMIN,data:{animation:'animation.pet.spin'},
+  });
+  assert.equal(selected.status,200); assert.equal(selected.data.animation_name,'animation.pet.spin');
+  const config=await request('/v1/resources/test-pet?type=animation-config');
+  assert.deepEqual(config.data,{animation:'animation.pet.spin',hasFile:true});
+  const served=await request('/v1/resources/test-pet?type=animation');
+  assert.equal(served.status,200); assert.deepEqual(served.data,JSON.parse(animation));
+});

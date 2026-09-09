@@ -88,7 +88,7 @@ test('editor converts API transforms exactly like the Minecraft renderer', () =>
 
 test('backpack editor uses the torso anchor, Y/Z flip and back-facing yaw', () => {
   const base = editor().slotBase('backpack');
-  assert.deepEqual(Array.from(base.position), [0, .2, .3]);
+  assert.deepEqual(Array.from(base.position), [0, .3, .3]);
   assert.deepEqual(Array.from(base.scale), [1, -1, -1]);
   assert.equal(base.yaw, Math.PI);
 });

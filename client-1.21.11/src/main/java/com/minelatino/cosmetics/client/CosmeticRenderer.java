@@ -17,9 +17,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.WeakHashMap;
 
 /**
  * Renders cosmetic overlays on players using 3D models (Blockbench JSON format).
@@ -35,6 +37,8 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
     private static final Logger LOG = LoggerFactory.getLogger("MineLatino Cosmetics");
 
     static final Map<Integer, UUID> ENTITY_UUID_MAP = new ConcurrentHashMap<>();
+    private static final Map<AvatarRenderState, CosmeticPreview.Frame> PREVIEW_FRAMES =
+            Collections.synchronizedMap(new WeakHashMap<>());
     private static int renderCallCount = 0;
     private final ResourceCache resourceCache;
 
@@ -49,6 +53,10 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
         ENTITY_UUID_MAP.put(entityId, uuid);
     }
 
+    static void registerPreview(AvatarRenderState state, CosmeticPreview.Frame frame) {
+        PREVIEW_FRAMES.put(state,frame);
+    }
+
     @Override
     public void submit(PoseStack poseStack, SubmitNodeCollector collector, int packedLight,
                        AvatarRenderState renderState, float yaw, float partialTick) {
@@ -59,9 +67,9 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
             return;
         }
 
-        CosmeticPreview.Frame preview = CosmeticPreview.FRAME.get();
+        CosmeticPreview.Frame preview = PREVIEW_FRAMES.remove(renderState);
         List<EquipmentCache.EquippedItem> equipped;
-        if (preview != null && preview.entityId == renderState.id) {
+        if (preview != null) {
             preview.layerVisited = true;
             CosmeticsDiagnostics.changed("PREVIEW_RENDER","layer active; items="+preview.items.size());
             equipped = preview.items;
@@ -141,6 +149,7 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
             } else if ("PET".equals(slot)) {
                 poseStack.translate(0.8, 1.0 + Math.sin(state.ageInTicks * 0.08) * 0.035, 0);
                 poseStack.scale(0.55f, -0.55f, -0.55f);
+                applyPetAnimation(poseStack,resource.petAnimation());
             } else {
                 getParentModel().body.translateAndRotate(poseStack);
                 poseStack.translate(0, 0.3, "BACKPACK".equals(slot) ? 0.30 : 0.16);
@@ -189,6 +198,14 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
                 (float)Math.toRadians(t.rotation()[1]),
                 (float)Math.toRadians(-t.rotation()[2])));
         poseStack.scale(t.scale()[0], t.scale()[1], t.scale()[2]);
+    }
+
+    private static void applyPetAnimation(PoseStack poseStack, PetAnimation animation) {
+        var pose=animation.sample(System.nanoTime()/1_000_000_000.0);
+        poseStack.translate(pose.position()[0]/16,pose.position()[1]/16,pose.position()[2]/16);
+        poseStack.mulPose(new Quaternionf().rotationXYZ((float)Math.toRadians(pose.rotation()[0]),
+                (float)Math.toRadians(pose.rotation()[1]),(float)Math.toRadians(pose.rotation()[2])));
+        poseStack.scale(pose.scale()[0],pose.scale()[1],pose.scale()[2]);
     }
 
     private static void renderQuad(VertexConsumer consumer, PoseStack.Pose pose, int packedLight, CosmeticModel.Quad quad) {

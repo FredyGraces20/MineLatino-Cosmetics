@@ -14,14 +14,13 @@ import org.joml.Vector3f;
 /** A separate player entity: orbiting the preview never rotates/mutates the actual player.
  *  Ported for 1.21.11: uses submitEntityRenderState instead of InventoryScreen.renderEntityInInventory. */
 public final class CosmeticPreview {
-    static final ThreadLocal<Frame> FRAME = new ThreadLocal<>();
     static final class Frame {
-        final int entityId;
         final List<EquipmentCache.EquippedItem> items;
         boolean layerVisited;
-        Frame(int entityId, List<EquipmentCache.EquippedItem> items) { this.entityId=entityId; this.items=items; }
+        Frame(List<EquipmentCache.EquippedItem> items) { this.items=items; }
     }
     private RemotePlayer actor;
+    private Frame previousFrame;
     private boolean layerAvailable;
     public boolean layerAvailable() { return layerAvailable; }
 
@@ -40,28 +39,31 @@ public final class CosmeticPreview {
             actor.yHeadRot=180; actor.yHeadRotO=180;
         }
         actor.tickCount=mc.player.tickCount;
-        // Skin texture: PlayerSkin.body().texturePath() returns Identifier in 1.21.11
-                float scale=Math.min(h/3.2f,w/2.4f)*zoom;
-        Frame frame=new Frame(actor.getId(),List.copyOf(equipment));
-        Frame previous=FRAME.get();
+        float scale=Math.min(h/3.2f,w/2.4f)*zoom;
+        if (previousFrame != null) layerAvailable=previousFrame.layerVisited;
+        Frame frame=new Frame(List.copyOf(equipment));
         g.enableScissor(x,y,x+w,y+h);
-        FRAME.set(frame);
         try {
-            // 1.21.11: use GuiGraphics.submitEntityRenderState instead of InventoryScreen.renderEntityInInventory
             @SuppressWarnings("unchecked")
             EntityRenderer<? super RemotePlayer, ?> renderer = (EntityRenderer<? super RemotePlayer, ?>) mc.getEntityRenderDispatcher().getRenderer(actor);
             AvatarRenderState renderState = (AvatarRenderState) renderer.createRenderState(actor, 0f);
-            float aspect = (float) w / h;
+            // Match InventoryScreen.extractRenderState: GUI entities use full
+            // brightness and do not submit world shadows or outlines.
+            renderState.lightCoords=0x00F000F0;
+            renderState.shadowPieces.clear();
+            renderState.outlineColor=0;
+            CosmeticRenderer.registerPreview(renderState,frame);
+            previousFrame=frame;
             g.submitEntityRenderState(renderState, scale,
-                    new Vector3f(0, -0.1f, 0),
+                    new Vector3f(0, renderState.boundingBoxHeight/2f, 0),
                     new Quaternionf().rotationZ((float)Math.PI).rotateY((float)Math.toRadians(orbit)),
                     new Quaternionf(),
-                    x + w/2, y + h, w, h);
-            layerAvailable=frame.layerVisited;
+                    x, y, x+w, y+h);
         } catch (Exception e) {
-            // Preview rendering is non-critical
+            previousFrame=null;
+            layerAvailable=false;
+            CosmeticsDiagnostics.event("PREVIEW_ERROR",CosmeticsDiagnostics.failure(e));
         } finally {
-            if (previous == null) FRAME.remove(); else FRAME.set(previous);
             CosmeticRenderer.ENTITY_UUID_MAP.remove(actor.getId());
             g.disableScissor();
         }

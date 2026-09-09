@@ -109,8 +109,10 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
           const resource = store.getResource(item.id);
           const files = store.getResourceFiles(item.id);
           const hasTexture = !!resource?.file_path || files.length > 0;
+          const petAnimation=store.getPetAnimation(item.id);
           const hashSource = createHash('sha256').update(JSON.stringify([resource?.sha256, resource?.model_sha256,
-            files.map(f => [f.name, f.sha256, f.uploaded_at, f.mcmeta_path, f.mcmeta_size])])).digest('hex');
+            files.map(f => [f.name, f.sha256, f.uploaded_at, f.mcmeta_path, f.mcmeta_size]),
+            petAnimation?.sha256,petAnimation?.animation_name,petAnimation?.updated_at])).digest('hex');
           return { ...item, ...store.product(item.id), hasTexture, hasModel: !!resource?.model_path,
             textureCount: files.length,
             resourceVersion: hashSource ? hashSource.slice(0, 12) : String(item.revision) };
@@ -136,6 +138,22 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
         if (typeParam === 'manifest') {
           const files = store.getResourceFiles(id).map(f => ({ name: f.name, hasMcmeta: !!f.mcmeta_path }));
           return Response.json({ files, hasLegacy: !!res.file_path }, { headers: { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
+        }
+        if (typeParam === 'animation-config') {
+          const animation = store.getPetAnimation(id);
+          return Response.json({ animation: animation?.animation_name ?? null, hasFile: !!animation?.file_path },
+            { headers: { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
+        }
+        if (typeParam === 'animation') {
+          const animation = store.getPetAnimation(id);
+          requireThat(animation?.file_path, 'Animación no disponible', 404);
+          const animationFile = join(resourceDir, animation.file_path);
+          requireThat(existsSync(animationFile), 'Archivo de animación no encontrado', 404);
+          const data = readFileSync(animationFile);
+          requireThat(createHash('sha256').update(data).digest('hex') === animation.sha256, 'Integridad de animación comprometida', 500);
+          const response = binary(data, 'application/json', true);
+          response.headers.set('Access-Control-Allow-Origin', '*');
+          return response;
         }
         // Serve model JSON if requested via query param
         if (typeParam === 'model') {
@@ -244,7 +262,15 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
 
         // Catalog, grants, revocations, owners, audit, menu
         if (method === 'GET' && path === '/v1/admin/cosmetics/catalog') {
-          const items = store.catalog(true, offset(url)).map(item => ({ ...item, product: store.product(item.id), resource: store.getResource(item.id) || null, files: store.getResourceFiles(item.id) }));
+          const items = store.catalog(true, offset(url)).map(item => {
+            const petAnimation=store.getPetAnimation(item.id);
+            let names=[];
+            if (petAnimation?.file_path && resourceDir) {
+              try { names=Object.keys(JSON.parse(readFileSync(join(resourceDir,petAnimation.file_path),'utf8')).animations||{}); } catch { names=[]; }
+            }
+            return { ...item, product: store.product(item.id), resource: store.getResource(item.id) || null,
+              files: store.getResourceFiles(item.id), petAnimation: petAnimation ? { ...petAnimation,names } : null };
+          });
           return json({ items });
         }
         const itemMatch = path.match(/^\/v1\/admin\/cosmetics\/catalog\/([a-z0-9_-]+)$/);
@@ -333,6 +359,46 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
             store.audit(actor, 'resource.delete', { cosmeticId: id, type: 'model' });
           }
           return json({ deleted: !!(res?.model_path) });
+        }
+
+        const petAnimationMatch = path.match(/^\/v1\/admin\/cosmetics\/catalog\/([a-z0-9_-]+)\/animation$/);
+        if (method === 'PUT' && petAnimationMatch) {
+          requireThat(resourceDir, 'Recursos no disponibles', 503);
+          const id = cosmeticId(petAnimationMatch[1]);
+          requireThat(store.cosmetic(id).slot === 'PET', 'El cosmético debe ser una mascota');
+          const filename = request.headers.get('x-filename') || 'pet.animation.json';
+          requireThat(/\.json$/i.test(filename), 'La animación debe ser JSON', 415);
+          const buffer = await binaryBody(request, MAX_RESOURCE_SIZE);
+          let parsed;
+          try { parsed = JSON.parse(buffer.toString('utf8')); } catch { throw new ApiError(400, 'JSON de animación inválido'); }
+          const names = Object.keys(parsed?.animations || {});
+          requireThat(names.length > 0 && names.length <= 128, 'No se encontraron animaciones de Blockbench');
+          const requested = request.headers.get('x-animation-name');
+          const selected = requested && names.includes(requested) ? requested : names[0];
+          const sha256 = createHash('sha256').update(buffer).digest('hex');
+          const filePath = `${id}_animation.json`;
+          const old = store.getPetAnimation(id);
+          if (old?.file_path && old.file_path !== filePath) {
+            const oldPath = join(resourceDir, old.file_path); if (existsSync(oldPath)) unlinkSync(oldPath);
+          }
+          writeFileSync(join(resourceDir, filePath), buffer);
+          return json({ ...store.savePetAnimation(id, selected, filePath, sha256, buffer.length, actor), names });
+        }
+        if (method === 'PATCH' && petAnimationMatch) {
+          const id = cosmeticId(petAnimationMatch[1]);
+          const current = store.getPetAnimation(id);
+          requireThat(current?.file_path, 'Sube primero un archivo de animación', 404);
+          const input = await body(request);
+          const data = JSON.parse(readFileSync(join(resourceDir, current.file_path), 'utf8'));
+          requireThat(Object.hasOwn(data.animations || {}, input.animation), 'La animación elegida no existe');
+          return json(store.savePetAnimation(id, input.animation, null, null, null, actor));
+        }
+        if (method === 'DELETE' && petAnimationMatch) {
+          const id = cosmeticId(petAnimationMatch[1]);
+          const old = store.getPetAnimation(id);
+          if (old?.file_path) { const file = join(resourceDir, old.file_path); if (existsSync(file)) unlinkSync(file); }
+          store.deletePetAnimation(id, actor);
+          return json({ deleted: !!old });
         }
 
         // ── Multi-file resource management ──────────────────────────────

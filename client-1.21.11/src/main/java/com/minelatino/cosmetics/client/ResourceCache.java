@@ -35,6 +35,7 @@ public final class ResourceCache {
     private final Map<String, Identifier> textures = new ConcurrentHashMap<>();
     private final Map<String, CosmeticModel> models = new ConcurrentHashMap<>();
     private final Map<String, Map<String, Material>> materials = new ConcurrentHashMap<>();
+    private final Map<String, PetAnimation> petAnimations = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<CachedResource>> pending = new ConcurrentHashMap<>();
     private final Map<String, Long> nextRefresh = new ConcurrentHashMap<>();
     private volatile long generation;
@@ -45,9 +46,9 @@ public final class ResourceCache {
     public void retry(String id) { nextRefresh.remove(id); errors.remove(id); }
 
     public record Material(Identifier texture, TextureAnimation animation) {}
-    public record CachedResource(Identifier texture, CosmeticModel model, Map<String, Material> materials) {}
+    public record CachedResource(Identifier texture, CosmeticModel model, Map<String, Material> materials, PetAnimation petAnimation) {}
     private CachedResource cached(String id, Identifier texture, CosmeticModel model) {
-        return new CachedResource(texture, model, materials.getOrDefault(id, Map.of()));
+        return new CachedResource(texture, model, materials.getOrDefault(id, Map.of()), petAnimations.getOrDefault(id, PetAnimation.none()));
     }
 
     public ResourceCache(String baseUrl, Path cacheDir) {
@@ -106,7 +107,7 @@ public final class ResourceCache {
     public Identifier get(String cosmeticId) { return textures.get(cosmeticId); }
 
     private record TextureData(byte[] png, String mcmeta) {}
-    private record DownloadData(byte[] texturePng, CosmeticModel model, Map<String, TextureData> materials) {}
+    private record DownloadData(byte[] texturePng, CosmeticModel model, Map<String, TextureData> materials, PetAnimation petAnimation) {}
 
     private byte[] download(String id, String query) throws Exception {
         var response = http.send(HttpRequest.newBuilder(URI.create(baseUrl + "/v1/resources/" + id + "?" + query))
@@ -167,7 +168,16 @@ public final class ResourceCache {
                 else throw new IOException("Missing texture file: " + name + ". Upload PNG with this name.");
             }
         }
-        return new DownloadData(textureData, model, named);
+        PetAnimation petAnimation=PetAnimation.none();
+        try {
+            String config=new String(download(cosmeticId,"type=animation-config&"+revision),StandardCharsets.UTF_8);
+            var parsed=com.google.gson.JsonParser.parseString(config).getAsJsonObject();
+            if (parsed.has("hasFile") && parsed.get("hasFile").getAsBoolean()) {
+                String selected=parsed.has("animation") && !parsed.get("animation").isJsonNull() ? parsed.get("animation").getAsString() : null;
+                petAnimation=PetAnimation.parse(new String(download(cosmeticId,"type=animation&"+revision),StandardCharsets.UTF_8),selected);
+            }
+        } catch (IOException ignored) { /* Static cosmetics and older services remain compatible. */ }
+        return new DownloadData(textureData, model, named, petAnimation);
     }
 
     private CachedResource registerOnMainThread(String cosmeticId, DownloadData data) {
@@ -210,6 +220,7 @@ public final class ResourceCache {
         if (oldMaterials != null) oldMaterials.values().stream().filter(m -> loaded.values().stream().noneMatch(n -> n.texture().equals(m.texture())))
                 .forEach(m -> Minecraft.getInstance().getTextureManager().release(m.texture()));
         models.put(cosmeticId, model);
+        petAnimations.put(cosmeticId,data.petAnimation());
         CosmeticsDiagnostics.event("RESOURCE_READY",CosmeticsDiagnostics.id(cosmeticId)+" elements="+model.elements.size()+" quads="+model.quads.size());
         return cached(cosmeticId, texLoc, model);
     }
@@ -223,6 +234,7 @@ public final class ResourceCache {
         Minecraft.getInstance().execute(() -> oldTextures.forEach(id -> Minecraft.getInstance().getTextureManager().release(id)));
         textures.clear();
         models.clear();
+        petAnimations.clear();
         pending.clear();
         nextRefresh.clear();
         errors.clear();

@@ -154,6 +154,7 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
                 // Companion beside the player's feet, not attached to the animated head/body.
                 poseStack.translate(0.8, 1.0 + Math.sin(state.ageInTicks * 0.08) * 0.035, 0);
                 poseStack.scale(0.55f, -0.55f, -0.55f);
+                applyPetAnimation(poseStack,resource.petAnimation());
             } else {
                 getParentModel().body.translateAndRotate(poseStack);
                 poseStack.translate(0, 0.3, "BACKPACK".equals(slot) ? 0.30 : 0.16);
@@ -199,6 +200,14 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
                 (float)Math.toRadians(t.rotation()[1]),
                 (float)Math.toRadians(-t.rotation()[2])));
         poseStack.scale(t.scale()[0], t.scale()[1], t.scale()[2]);
+    }
+
+    private static void applyPetAnimation(PoseStack poseStack, PetAnimation animation) {
+        var pose=animation.sample(System.nanoTime()/1_000_000_000.0);
+        poseStack.translate(pose.position()[0]/16,pose.position()[1]/16,pose.position()[2]/16);
+        poseStack.mulPose(new Quaternionf().rotationXYZ((float)Math.toRadians(pose.rotation()[0]),
+                (float)Math.toRadians(pose.rotation()[1]),(float)Math.toRadians(pose.rotation()[2])));
+        poseStack.scale(pose.scale()[0],pose.scale()[1],pose.scale()[2]);
     }
 
     /** Renders a single quad from a CosmeticModel. */
