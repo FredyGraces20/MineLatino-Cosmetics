@@ -134,7 +134,13 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
                 CustomHeadLayer.translateToHead(poseStack, CustomHeadLayer.Transforms.DEFAULT);
                 ApiClient.TransformData serverHead = CosmeticsClient.instance().getTransform(cosmeticId, "head");
                 if (serverHead != null) {
-                    applyDisplayTransform(poseStack, serverHead);
+                    // Head slot: no X/Z negation — head bone translateAndRotate already produces Y-up space.
+                    poseStack.translate(serverHead.translation()[0]/16, serverHead.translation()[1]/16, serverHead.translation()[2]/16);
+                    poseStack.mulPose(new Quaternionf().rotationXYZ(
+                            (float)Math.toRadians(serverHead.rotation()[0]),
+                            (float)Math.toRadians(serverHead.rotation()[1]),
+                            (float)Math.toRadians(serverHead.rotation()[2])));
+                    poseStack.scale(serverHead.scale()[0], serverHead.scale()[1], serverHead.scale()[2]);
                 } else {
                     CosmeticModel.DisplayTransform head = model.head;
                     poseStack.translate(head.translation()[0]/16, head.translation()[1]/16, head.translation()[2]/16);
