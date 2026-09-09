@@ -16,8 +16,11 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
+import java.util.Comparator;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -123,7 +126,84 @@ public final class ResourceCache {
     // ── Download (background thread) ──────────────────────────────────────
 
     private record TextureData(byte[] png, String mcmeta) {}
-    private record DownloadData(byte[] texturePng, CosmeticModel model, Map<String, TextureData> materials, PetAnimation petAnimation) {}
+    private record DownloadData(byte[] texturePng, CosmeticModel model, String modelJson,
+                                Map<String, TextureData> materials, PetAnimation petAnimation,
+                                String petAnimationJson, String petAnimationName, String version) {}
+    private record DiskBundle(String version, DownloadData data) {}
+
+    private static byte[] boundedRead(Path path) throws IOException {
+        long size = Files.size(path);
+        if (size <= 0 || size > 2 * 1024 * 1024) throw new IOException("Invalid cached resource size");
+        return Files.readAllBytes(path);
+    }
+
+    private DiskBundle readDisk(String id) {
+        Path dir = cacheDir.resolve(id);
+        try {
+            Properties meta = new Properties();
+            try (var input = Files.newInputStream(dir.resolve("metadata.properties"))) { meta.load(input); }
+            String version = meta.getProperty("version", "");
+            if (!version.matches("[a-f0-9]{12}")) throw new IOException("Invalid cache version");
+            byte[] primary = boundedRead(dir.resolve("texture.png"));
+            String modelJson = Files.exists(dir.resolve("model.json"))
+                    ? Files.readString(dir.resolve("model.json"), StandardCharsets.UTF_8) : null;
+            if (modelJson != null && modelJson.length() > 2 * 1024 * 1024) throw new IOException("Cached model too large");
+            CosmeticModel model = modelJson == null ? CosmeticModel.empty() : CosmeticModel.parse(modelJson);
+            var named = new java.util.LinkedHashMap<String, TextureData>();
+            String names = meta.getProperty("materials", "");
+            if (!names.isEmpty()) for (String name : names.split(",")) {
+                if (!name.matches("[a-z0-9_]{1,32}")) throw new IOException("Invalid cached material name");
+                byte[] png = boundedRead(dir.resolve("material-" + name + ".png"));
+                Path mcmeta = dir.resolve("material-" + name + ".mcmeta");
+                named.put(name, new TextureData(png, Files.exists(mcmeta) ? Files.readString(mcmeta, StandardCharsets.UTF_8) : null));
+            }
+            String animationJson = Files.exists(dir.resolve("pet-animation.json"))
+                    ? Files.readString(dir.resolve("pet-animation.json"), StandardCharsets.UTF_8) : null;
+            String animationName = meta.getProperty("petAnimationName", "");
+            PetAnimation animation = animationJson == null ? PetAnimation.none()
+                    : PetAnimation.parse(animationJson, animationName.isEmpty() ? null : animationName);
+            return new DiskBundle(version, new DownloadData(primary, model, modelJson, Map.copyOf(named), animation,
+                    animationJson, animationName.isEmpty() ? null : animationName, version));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static void deleteTree(Path root) {
+        if (!Files.exists(root)) return;
+        try (var paths = Files.walk(root)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try { Files.deleteIfExists(path); } catch (IOException ignored) {}
+            });
+        } catch (IOException ignored) {}
+    }
+
+    private void writeDisk(String id, DownloadData data) {
+        Path target = cacheDir.resolve(id), temporary = cacheDir.resolve(id + ".tmp-" + System.nanoTime());
+        try {
+            Files.createDirectories(temporary);
+            Files.write(temporary.resolve("texture.png"), data.texturePng());
+            if (data.modelJson() != null) Files.writeString(temporary.resolve("model.json"), data.modelJson(), StandardCharsets.UTF_8);
+            for (var entry : data.materials().entrySet()) {
+                Files.write(temporary.resolve("material-" + entry.getKey() + ".png"), entry.getValue().png());
+                if (entry.getValue().mcmeta() != null)
+                    Files.writeString(temporary.resolve("material-" + entry.getKey() + ".mcmeta"), entry.getValue().mcmeta(), StandardCharsets.UTF_8);
+            }
+            if (data.petAnimationJson() != null)
+                Files.writeString(temporary.resolve("pet-animation.json"), data.petAnimationJson(), StandardCharsets.UTF_8);
+            Properties meta = new Properties();
+            meta.setProperty("version", data.version());
+            meta.setProperty("materials", String.join(",", data.materials().keySet()));
+            meta.setProperty("petAnimationName", data.petAnimationName() == null ? "" : data.petAnimationName());
+            try (var output = Files.newOutputStream(temporary.resolve("metadata.properties"))) { meta.store(output, null); }
+            deleteTree(target);
+            try { Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE); }
+            catch (IOException ignored) { Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING); }
+        } catch (Exception e) {
+            LOG.warn("Could not persist cosmetic cache for {}", id, e);
+            deleteTree(temporary);
+        }
+    }
 
     private byte[] download(String id, String query) throws Exception {
         var response = http.send(HttpRequest.newBuilder(URI.create(baseUrl + "/v1/resources/" + id + "?" + query))
@@ -134,10 +214,39 @@ public final class ResourceCache {
     }
 
     private DownloadData downloadBoth(String cosmeticId) throws Exception {
-        // Download texture PNG
+        DiskBundle disk = readDisk(cosmeticId);
+        HttpRequest.Builder manifestRequest = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + "/v1/resources/" + cosmeticId + "?type=manifest"))
+                .timeout(TIMEOUT).header("Cache-Control", "no-cache").header("Accept", "application/json").GET();
+        if (disk != null) manifestRequest.header("If-None-Match", "\"" + disk.version() + "\"");
+        HttpResponse<String> manifestResponse;
+        try { manifestResponse = http.send(manifestRequest.build(), HttpResponse.BodyHandlers.ofString()); }
+        catch (Exception e) {
+            if (disk != null) {
+                CosmeticsDiagnostics.event("RESOURCE_DISK_STALE", CosmeticsDiagnostics.id(cosmeticId));
+                return disk.data();
+            }
+            throw e;
+        }
+        if (manifestResponse.statusCode() == 304 && disk != null) {
+            CosmeticsDiagnostics.event("RESOURCE_DISK_HIT", CosmeticsDiagnostics.id(cosmeticId) + " version=" + disk.version());
+            return disk.data();
+        }
+        if (manifestResponse.statusCode() != 200) {
+            if (disk != null) return disk.data();
+            throw new IOException("Resource manifest unavailable: HTTP " + manifestResponse.statusCode());
+        }
+        var manifest = com.google.gson.JsonParser.parseString(manifestResponse.body()).getAsJsonObject();
+        String version = manifest.has("resourceVersion") ? manifest.get("resourceVersion").getAsString() : "";
+        if (!version.matches("[a-f0-9]{12}")) throw new IOException("Resource manifest has no valid version");
+        var files = new java.util.HashMap<String, Boolean>();
+        for (var entry : manifest.getAsJsonArray("files")) {
+            var file = entry.getAsJsonObject();
+            String name = file.get("name").getAsString();
+            if (name.matches("[a-z0-9_]{1,32}")) files.put(name, file.get("hasMcmeta").getAsBoolean());
+        }
+        String revision = "v=" + version;
         byte[] textureData = null;
-        // Existing server URLs are immutable-cached: use a fresh key for each revalidation.
-        String revision = "refresh=" + System.currentTimeMillis();
         HttpRequest texReq = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/v1/resources/" + cosmeticId + "?" + revision))
                 .timeout(TIMEOUT).header("Cache-Control", "no-cache").header("Accept", "image/png").GET().build();
@@ -154,6 +263,7 @@ public final class ResourceCache {
         if (textureData.length > 2 * 1024 * 1024) throw new IOException("Texture exceeds 2 MiB");
         // A 404 explicitly denotes a PNG-only asset. Errors must not replace a good model.
         CosmeticModel model = CosmeticModel.empty();
+        String modelJson = null;
         HttpRequest modelReq = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/v1/resources/" + cosmeticId + "?type=model&" + revision))
                 .timeout(TIMEOUT).header("Cache-Control", "no-cache").header("Accept", "application/json").GET().build();
@@ -163,6 +273,7 @@ public final class ResourceCache {
             String json = modelRes.body();
             if (json == null || json.length() > 2 * 1024 * 1024) throw new IOException("Invalid model size");
             model = CosmeticModel.parse(json);
+            modelJson = json;
         } else if (modelRes.statusCode() != 404) {
             throw new IOException("Model unavailable: HTTP " + modelRes.statusCode());
         }
@@ -171,17 +282,6 @@ public final class ResourceCache {
         var names = model.quads.stream().map(CosmeticModel.Quad::texture).distinct().toList();
         if (names.size() > 32) throw new IOException("Too many model textures");
         if (!names.isEmpty()) {
-            var manifestResponse = http.send(HttpRequest.newBuilder(URI.create(baseUrl + "/v1/resources/" + cosmeticId + "?type=manifest&" + revision))
-                    .timeout(TIMEOUT).GET().build(), HttpResponse.BodyHandlers.ofString());
-            var files = new java.util.HashMap<String, Boolean>();
-            try {
-                var manifest = com.google.gson.JsonParser.parseString(manifestResponse.body()).getAsJsonObject();
-                for (var entry : manifest.getAsJsonArray("files")) {
-                    var file = entry.getAsJsonObject(); files.put(file.get("name").getAsString(), file.get("hasMcmeta").getAsBoolean());
-                }
-            } catch (RuntimeException e) {
-                if (names.size() > 1) throw new IOException("Update cosmetics service: texture manifest unavailable", e);
-            }
             for (String name : names) {
                 if (files.containsKey(name)) {
                     byte[] png = download(cosmeticId, "file="+name+"&"+revision);
@@ -192,15 +292,21 @@ public final class ResourceCache {
             }
         }
         PetAnimation petAnimation=PetAnimation.none();
+        String petAnimationJson = null, petAnimationName = null;
         try {
             String config=new String(download(cosmeticId,"type=animation-config&"+revision),StandardCharsets.UTF_8);
             var parsed=com.google.gson.JsonParser.parseString(config).getAsJsonObject();
             if (parsed.has("hasFile") && parsed.get("hasFile").getAsBoolean()) {
                 String selected=parsed.has("animation") && !parsed.get("animation").isJsonNull() ? parsed.get("animation").getAsString() : null;
-                petAnimation=PetAnimation.parse(new String(download(cosmeticId,"type=animation&"+revision),StandardCharsets.UTF_8),selected);
+                petAnimationJson = new String(download(cosmeticId,"type=animation&"+revision),StandardCharsets.UTF_8);
+                petAnimationName = selected;
+                petAnimation=PetAnimation.parse(petAnimationJson,selected);
             }
         } catch (IOException ignored) { /* Static cosmetics and older services remain compatible. */ }
-        return new DownloadData(textureData, model, named, petAnimation);
+        DownloadData result = new DownloadData(textureData, model, modelJson, Map.copyOf(named), petAnimation,
+                petAnimationJson, petAnimationName, version);
+        writeDisk(cosmeticId, result);
+        return result;
     }
 
     // ── Registration (main thread) ────────────────────────────────────────

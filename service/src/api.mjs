@@ -85,6 +85,13 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
     requireThat(identity, 'Autorización administrativa requerida', 401);
     return identity;
   }
+  function resourceVersion(id, resource = store.getResource(id)) {
+    const files = store.getResourceFiles(id);
+    const petAnimation = store.getPetAnimation(id);
+    return createHash('sha256').update(JSON.stringify([resource?.sha256, resource?.model_sha256,
+      files.map(f => [f.name, f.sha256, f.uploaded_at, f.mcmeta_path, f.mcmeta_size]),
+      petAnimation?.sha256, petAnimation?.animation_name, petAnimation?.updated_at])).digest('hex').slice(0, 12);
+  }
   return async (request, remoteAddress = 'local') => {
     try {
       const time = now();
@@ -109,13 +116,9 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
           const resource = store.getResource(item.id);
           const files = store.getResourceFiles(item.id);
           const hasTexture = !!resource?.file_path || files.length > 0;
-          const petAnimation=store.getPetAnimation(item.id);
-          const hashSource = createHash('sha256').update(JSON.stringify([resource?.sha256, resource?.model_sha256,
-            files.map(f => [f.name, f.sha256, f.uploaded_at, f.mcmeta_path, f.mcmeta_size]),
-            petAnimation?.sha256,petAnimation?.animation_name,petAnimation?.updated_at])).digest('hex');
           return { ...item, ...store.product(item.id), hasTexture, hasModel: !!resource?.model_path,
             textureCount: files.length,
-            resourceVersion: hashSource ? hashSource.slice(0, 12) : String(item.revision) };
+            resourceVersion: resourceVersion(item.id, resource) };
         });
         return Response.json({ items, nextOffset: items.length === 50 ? start + 50 : null },
           { headers: { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
@@ -133,16 +136,25 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
         const cosmetic = store.cosmetic(id);
         const adminIdentity = authorization ? adminAuth?.resolve(authorization, adminToken) : null;
         requireThat(cosmetic?.status === 'published' || adminIdentity, 'Recurso no publicado', 404);
+        const version = resourceVersion(id, res), etag = `"${version}"`;
+        const resourceResponse = response => {
+          response.headers.set('Access-Control-Allow-Origin', '*');
+          response.headers.set('ETag', etag);
+          return response;
+        };
+        if ((request.headers.get('if-none-match') || '').split(',').map(value => value.trim()).includes(etag)) {
+          return resourceResponse(new Response(null, { status: 304, headers: { 'Cache-Control': 'no-cache' } }));
+        }
         const typeParam = url.searchParams.get('type');
         const fileName = url.searchParams.get('file');
         if (typeParam === 'manifest') {
           const files = store.getResourceFiles(id).map(f => ({ name: f.name, hasMcmeta: !!f.mcmeta_path }));
-          return Response.json({ files, hasLegacy: !!res.file_path }, { headers: { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
+          return resourceResponse(Response.json({ files, hasLegacy: !!res.file_path, resourceVersion: version }, { headers: { 'Cache-Control': 'no-cache' } }));
         }
         if (typeParam === 'animation-config') {
           const animation = store.getPetAnimation(id);
-          return Response.json({ animation: animation?.animation_name ?? null, hasFile: !!animation?.file_path },
-            { headers: { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
+          return resourceResponse(Response.json({ animation: animation?.animation_name ?? null, hasFile: !!animation?.file_path },
+            { headers: { 'Cache-Control': 'no-cache' } }));
         }
         if (typeParam === 'animation') {
           const animation = store.getPetAnimation(id);
@@ -152,8 +164,7 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
           const data = readFileSync(animationFile);
           requireThat(createHash('sha256').update(data).digest('hex') === animation.sha256, 'Integridad de animación comprometida', 500);
           const response = binary(data, 'application/json', true);
-          response.headers.set('Access-Control-Allow-Origin', '*');
-          return response;
+          return resourceResponse(response);
         }
         // Serve model JSON if requested via query param
         if (typeParam === 'model') {
@@ -166,8 +177,7 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
             requireThat(hash === res.model_sha256, 'Integridad del modelo comprometida', 500);
           }
           const response = binary(modelData, 'application/json', true);
-          response.headers.set('Access-Control-Allow-Origin', '*');
-          return response;
+          return resourceResponse(response);
         }
         // Serve named file (multi-texture support)
         if (fileName) {
@@ -180,8 +190,7 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
             const mcmetaFile = join(resourceDir, file.mcmeta_path);
             requireThat(existsSync(mcmetaFile), 'Archivo mcmeta no encontrado', 404);
             const response = binary(readFileSync(mcmetaFile), 'application/json', true);
-            response.headers.set('Access-Control-Allow-Origin', '*');
-            return response;
+            return resourceResponse(response);
           }
           // Serve texture file
           const filePath = join(resourceDir, file.file_path);
@@ -190,8 +199,7 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
           const hash = createHash('sha256').update(fileData).digest('hex');
           requireThat(hash === file.sha256, 'Integridad comprometida', 500);
           const response = binary(fileData, 'image/png', true);
-          response.headers.set('Access-Control-Allow-Origin', '*');
-          return response;
+          return resourceResponse(response);
         }
         // Default: serve primary texture (backward compatible)
         if (res.file_path) {
@@ -201,8 +209,7 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
           const hash = createHash('sha256').update(fileData).digest('hex');
           requireThat(hash === res.sha256, 'Integridad comprometida', 500);
           const response = binary(fileData, res.content_type, true);
-          response.headers.set('Access-Control-Allow-Origin', '*');
-          return response;
+          return resourceResponse(response);
         }
         // Fallback: serve first file from resource_files (multi-texture cosmetics)
         const allFiles = store.getResourceFiles(id);
@@ -214,8 +221,7 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
         const fbHash = createHash('sha256').update(fbData).digest('hex');
         requireThat(fbHash === fallback.sha256, 'Integridad comprometida', 500);
         const fbResponse = binary(fbData, 'image/png', true);
-        fbResponse.headers.set('Access-Control-Allow-Origin', '*');
-        return fbResponse;
+        return resourceResponse(fbResponse);
       }
 
       // ── Admin auth (no prior auth required) ─────────────────────────────

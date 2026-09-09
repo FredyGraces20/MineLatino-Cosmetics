@@ -429,6 +429,10 @@ test('replacing named primary texture preserves new file and exposes manifest', 
   }
   const manifest = await request('/v1/resources/test-cape?type=manifest');
   assert.deepEqual(manifest.data.files, [{ name: 'texture', hasMcmeta: false }]);
+  assert.match(manifest.data.resourceVersion, /^[a-f0-9]{12}$/);
+  assert.equal(manifest.headers.get('etag'), `"${manifest.data.resourceVersion}"`);
+  const unchanged = await request('/v1/resources/test-cape?type=manifest', { headers: { 'If-None-Match': manifest.headers.get('etag') } });
+  assert.equal(unchanged.status, 304);
 });
 
 test('resource upload stores file with SHA-256 and serves it back', async t => {
