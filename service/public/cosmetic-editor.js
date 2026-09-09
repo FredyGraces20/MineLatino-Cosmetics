@@ -6,7 +6,7 @@
     // The mannequin uses Minecraft blocks and has its shoulders at y=.5.
     head: Object.freeze({ position: [0, .75, 0], scale: [1, 1, 1], yaw: 0 }),
     // Mirrors CosmeticRenderer: body anchor + (0, .3, .30), Y/Z flip and 180° yaw.
-    backpack: Object.freeze({ position: [0, .2, .30], scale: [1, -1, -1], yaw: Math.PI }),
+    backpack: Object.freeze({ position: [0, .3, .30], scale: [1, -1, -1], yaw: Math.PI }),
   });
 
   const triple = (value, fallback) => Array.isArray(value) && value.length === 3
