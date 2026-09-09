@@ -27,8 +27,8 @@ test('admin preview shares Java UV units and separates face materials', () => {
   const api = renderer(), geometry = api.cosmeticGeometry(model);
   assert.equal(geometry.groups.length, 2);
   assert.equal(geometry.groups[1].materialIndex, 1);
-  assert.equal(geometry.getAttribute('uv').getX(0), 0.5/128);
-  assert.equal(geometry.getAttribute('uv').getY(0), 1-14.125/128);
+  assert.equal(geometry.getAttribute('uv').getX(0), 0.5/16);
+  assert.equal(geometry.getAttribute('uv').getY(0), 1-14.125/16);
   geometry.dispose();
 });
 
