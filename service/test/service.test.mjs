@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Store, validateMenu, DEFAULT_MENU } from '../src/store.mjs';
+import { Store, validateMenu, DEFAULT_MENU, offlineUuid } from '../src/store.mjs';
 import { PlayerAuth, verifyMojang } from '../src/auth.mjs';
 import { AdminAuth } from '../src/adminAuth.mjs';
 import { AccountAuth } from '../src/accountAuth.mjs';
@@ -128,7 +128,7 @@ function fixture(t, options = {}) {
   return { store, auth, accountAuth, api, request, login };
 }
 
-test('MineLatino accounts support duplicate nicks without sharing cosmetics', async t => {
+test('MineLatino accounts reject duplicate active nicks', async t => {
   const { store, request } = fixture(t);
   store.saveCosmetic('cape', catalog, 'admin');
   const first = await request('/v1/account/register', { method: 'POST', data: {
@@ -137,11 +137,9 @@ test('MineLatino accounts support duplicate nicks without sharing cosmetics', as
   const second = await request('/v1/account/register', { method: 'POST', data: {
     email: 'dos@example.com', password: 'correct-horse-2', nick: 'MismoNick',
   }});
-  assert.equal(first.status, 201); assert.equal(second.status, 201);
-  assert.notEqual(first.data.account.accountId, second.data.account.accountId);
+  assert.equal(first.status, 201); assert.equal(second.status, 409);
   store.accountEntitlement({ accountId: first.data.account.accountId, cosmeticId: 'cape' }, true, 'test');
   assert.equal((await request('/v1/account/wardrobe', { token: first.data.token })).data.owned.length, 1);
-  assert.equal((await request('/v1/account/wardrobe', { token: second.data.token })).data.owned.length, 0);
 });
 
 test('admin account assignments list the owners consumed by the launcher and mod', async t => {
@@ -190,9 +188,12 @@ test('game token equips and publishes account cosmetics for offline identities',
     { accountId: registered.data.account.accountId, nick: 'OfflineUser', status: 'active' });
   assert.equal((await request('/v1/account/equipment', { method: 'PUT', token: game.data.token,
     data: { slot: 'CAPE', cosmeticId: 'cape' } })).status, 200);
+  const offlineId = offlineUuid('OfflineUser');
   assert.equal((await request('/v1/account/presence', { method: 'POST', token: game.data.token,
-    data: { uuid: OTHER, name: 'OfflineUser' } })).status, 200);
-  const appearance = await request(`/v1/cosmetics/appearance?uuids=${OTHER}&names=OfflineUser`);
+    data: { uuid: offlineId, name: 'OfflineUser' } })).status, 200);
+  assert.equal((await request('/v1/account/presence', { method: 'POST', token: game.data.token,
+    data: { uuid: OTHER, name: 'OfflineUser' } })).status, 409);
+  const appearance = await request(`/v1/cosmetics/appearance?uuids=${offlineId}&names=OfflineUser`);
   assert.equal(appearance.data.identityMode, 'minelatino-account');
   assert.deepEqual(appearance.data.players[0].equipped, [{ slot: 'CAPE', cosmeticId: 'cape' }]);
 });
@@ -204,8 +205,10 @@ test('player accounts can update themselves and administrators can suspend or de
     email: 'manage@example.com', password: 'correct-horse-4', nick: 'ManageMe',
   }});
   const accountId = registered.data.account.accountId;
+  assert.equal((await request('/v1/account/me', { method: 'PATCH', token: registered.data.token,
+    data: { nick: 'EditedNick', currentPassword: 'wrong-password' } })).status, 401);
   const edited = await request('/v1/account/me', { method: 'PATCH', token: registered.data.token,
-    data: { nick: 'EditedNick' } });
+    data: { nick: 'EditedNick', currentPassword: 'correct-horse-4' } });
   assert.equal(edited.data.account.nick, 'EditedNick');
   const listed = await request('/v1/admin/player-accounts?q=edited', { token: ADMIN });
   assert.equal(listed.data.items[0].accountId, accountId);
@@ -226,6 +229,7 @@ test('password recovery uses an expiring one-time code without revealing unknown
   }});
   const unknown = await request('/v1/account/password/forgot', { method: 'POST', data: { email: 'missing@example.com' } });
   const requested = await request('/v1/account/password/forgot', { method: 'POST', data: { email: 'recover@example.com' } });
+  await request('/v1/account/password/forgot', { method: 'POST', data: { email: 'recover@example.com' } });
   assert.equal(unknown.status, 202); assert.deepEqual(unknown.data, requested.data);
   assert.equal(requested.data.delivery, 'email'); assert.equal(delivered.length, 1);
   const reset = await request('/v1/account/password/reset', { method: 'POST', data: {
@@ -242,6 +246,31 @@ test('password recovery uses an expiring one-time code without revealing unknown
   assert.equal((await request('/v1/account/password/reset', { method: 'POST', data: {
     email: 'recover@example.com', code: delivered[0].code, password: 'third-password-789',
   }})).status, 400);
+});
+
+test('self deletion requires the current password and revokes the account', async t => {
+  const { request } = fixture(t);
+  const registered = await request('/v1/account/register', { method: 'POST', data: {
+    email: 'delete@example.com', password: 'delete-password-123', nick: 'DeleteMe',
+  }});
+  assert.equal((await request('/v1/account/me', { method: 'DELETE', token: registered.data.token,
+    data: { currentPassword: 'wrong-password' } })).status, 401);
+  assert.equal((await request('/v1/account/me', { method: 'DELETE', token: registered.data.token,
+    data: { currentPassword: 'delete-password-123' } })).status, 200);
+  assert.equal((await request('/v1/account/me', { token: registered.data.token })).status, 401);
+});
+
+test('account login is throttled per identity as well as per address', async t => {
+  const { request } = fixture(t);
+  await request('/v1/account/register', { method: 'POST', data: {
+    email: 'limited@example.com', password: 'correct-password-123', nick: 'LimitedUser',
+  }});
+  for (let index = 0; index < 10; index++) assert.equal((await request('/v1/account/login', { method: 'POST', data: {
+    email: 'limited@example.com', password: 'wrong-password-123',
+  }})).status, 401);
+  assert.equal((await request('/v1/account/login', { method: 'POST', data: {
+    email: 'limited@example.com', password: 'correct-password-123',
+  }})).status, 429);
 });
 
 test('signed-in password change verifies the old password and revokes every session', async t => {
@@ -520,6 +549,20 @@ test('Railway transport trusts only a valid X-Real-IP address', async t => {
   assert.ok(seen[1] === '127.0.0.1' || seen[1] === '::ffff:127.0.0.1');
 });
 
+test('admin static files receive browser security headers', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'minelatino-admin-static-'));
+  writeFileSync(join(directory, 'index.html'), '<!doctype html><title>Admin</title>');
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const server = createHttpServer(async () => Response.json({ ok: true }), 'http://127.0.0.1', directory);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
+  assert.match(response.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+  assert.equal(response.headers.get('x-frame-options'), 'DENY');
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+});
+
 // ── Admin auth tests ──────────────────────────────────────────────────
 
 test('admin bootstrap creates first admin and rejects duplicates', async t => {
@@ -568,11 +611,20 @@ test('admin logout invalidates the session', async t => {
   await request('/v1/admin/auth/logout', { method: 'POST', token: tok });
   assert.equal((await request('/v1/admin/accounts', { token: tok })).status, 401);
 });
-test('bootstrap token still works alongside admin sessions', async t => {
+test('bootstrap token is retired after the first administrator exists', async t => {
   const { request } = fixture(t);
   await request('/v1/admin/auth/bootstrap', { method: 'POST', data: { username: 'admin1', password: 'secure1234' }, token: ADMIN });
-  // Bootstrap token still works
-  assert.equal((await request('/v1/admin/accounts', { token: ADMIN })).status, 200);
+  assert.equal((await request('/v1/admin/accounts', { token: ADMIN })).status, 401);
+});
+test('deleting an administrator revokes its active sessions', async t => {
+  const { request } = fixture(t);
+  await request('/v1/admin/auth/bootstrap', { method: 'POST', data: { username: 'root1', password: 'secure1234' }, token: ADMIN });
+  const root = await request('/v1/admin/auth/login', { method: 'POST', data: { username: 'root1', password: 'secure1234' } });
+  await request('/v1/admin/accounts', { method: 'POST', token: root.data.token,
+    data: { username: 'root2', password: 'secure5678', role: 'superadmin' } });
+  const second = await request('/v1/admin/auth/login', { method: 'POST', data: { username: 'root2', password: 'secure5678' } });
+  assert.equal((await request('/v1/admin/accounts/root1', { method: 'DELETE', token: second.data.token })).status, 200);
+  assert.equal((await request('/v1/admin/accounts', { token: root.data.token })).status, 401);
 });
 test('player search by name and UUID', async t => {
   const { store, request } = fixture(t);

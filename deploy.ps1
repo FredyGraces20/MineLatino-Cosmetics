@@ -1,7 +1,7 @@
 # Build and optionally publish every supported MineLatino Cosmetics artifact.
 # mods.json is changed only after GitHub confirms that the release exists.
 param(
-    [string]$Version = '0.1.0-alpha.26',
+    [string]$Version = '0.1.0-alpha.27',
     [string[]]$MinecraftVersions = @('1.21.4', '1.21.11'),
     [switch]$SkipBuild,
     [switch]$SkipGithub,
@@ -19,6 +19,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $javaHome 'bin\java.exe'))) {
 }
 $env:JAVA_HOME = $javaHome
 $env:Path = "$(Join-Path $javaHome 'bin');$env:Path"
+$externalBuildRoot = $env:MINELATINO_BUILD_ROOT
 
 $artifacts = @()
 foreach ($mcVersion in $MinecraftVersions) {
@@ -35,9 +36,17 @@ foreach ($mcVersion in $MinecraftVersions) {
     foreach ($loader in @('fabric', 'forge')) {
         $jarName = "minelatino-cosmetics-$loader-$mcVersion-$Version.jar"
         $jarPath = if ($loader -eq 'fabric') {
-            Join-Path $repoRoot "build\$mcVersion\fabric\libs\$jarName"
+            if ($externalBuildRoot) {
+                Join-Path $externalBuildRoot "$mcVersion\fabric\libs\$jarName"
+            } else {
+                Join-Path $repoRoot "build\$mcVersion\fabric\libs\$jarName"
+            }
         } else {
-            Join-Path $repoRoot "forge\build\$mcVersion\libs\$jarName"
+            if ($externalBuildRoot) {
+                Join-Path $externalBuildRoot "$mcVersion\forge\libs\$jarName"
+            } else {
+                Join-Path $repoRoot "forge\build\$mcVersion\libs\$jarName"
+            }
         }
         if (-not (Test-Path -LiteralPath $jarPath -PathType Leaf)) { throw "Artifact not found: $jarPath" }
         $file = Get-Item -LiteralPath $jarPath

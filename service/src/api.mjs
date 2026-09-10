@@ -58,6 +58,10 @@ function validateResourceFile(buffer, filename) {
   // PNG magic bytes
   if (ext === '.png') {
     requireThat(buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47, 'Archivo PNG inválido');
+    requireThat(buffer.length >= 24 && buffer.toString('ascii', 12, 16) === 'IHDR', 'Cabecera PNG inválida');
+    const width = buffer.readUInt32BE(16), height = buffer.readUInt32BE(20);
+    requireThat(width > 0 && height > 0 && width <= 4096 && height <= 4096
+      && width * height <= 16_777_216, 'Dimensiones PNG no admitidas');
   }
   // JSON: must parse
   if (ext === '.json') {
@@ -116,11 +120,11 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
       }
       if (method === 'POST' && path === '/v1/account/register') {
         requireThat(accountAuth, 'Cuentas MineLatino no configuradas', 503);
-        return json(accountAuth.register(await body(request)), 201);
+        return json(await accountAuth.register(await body(request)), 201);
       }
       if (method === 'POST' && path === '/v1/account/login') {
         requireThat(accountAuth, 'Cuentas MineLatino no configuradas', 503);
-        return json(accountAuth.login(await body(request)));
+        return json(await accountAuth.login(await body(request)));
       }
       if (method === 'POST' && path === '/v1/account/password/forgot') {
         requireThat(accountAuth, 'Cuentas MineLatino no configuradas', 503);
@@ -128,7 +132,7 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
       }
       if (method === 'POST' && path === '/v1/account/password/reset') {
         requireThat(accountAuth, 'Cuentas MineLatino no configuradas', 503);
-        accountAuth.resetPassword(await body(request));
+        await accountAuth.resetPassword(await body(request));
         return json({ ok: true });
       }
       if (path.startsWith('/v1/account/')) {
@@ -152,15 +156,20 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
         if (method === 'PATCH' && path === '/v1/account/me') {
           requireThat(identity.session.scope === 'account', 'Permiso de sesión insuficiente', 403);
           const input = await body(request);
+          await accountAuth.requirePassword(accountId, input.currentPassword);
+          requireThat(input.email === undefined || input.email.trim().toLowerCase() === identity.account.email,
+            'El cambio de correo requiere verificación por soporte', 409);
           return json({ account: store.updatePlayerAccount(accountId, { email: input.email, nick: input.nick }) });
         }
         if (method === 'DELETE' && path === '/v1/account/me') {
           requireThat(identity.session.scope === 'account', 'Permiso de sesión insuficiente', 403);
+          const input = await body(request);
+          await accountAuth.requirePassword(accountId, input.currentPassword);
           return json({ account: store.deletePlayerAccount(accountId, `account:${accountId}`) });
         }
         if (method === 'PUT' && path === '/v1/account/password') {
           requireThat(identity.session.scope === 'account', 'Permiso de sesión insuficiente', 403);
-          accountAuth.updatePassword(accountId, await body(request)); return json({ ok: true });
+          await accountAuth.updatePassword(accountId, await body(request)); return json({ ok: true });
         }
         if (method === 'POST' && path === '/v1/account/game-token') return json(accountAuth.gameToken(authorization), 201);
         if (method === 'POST' && path === '/v1/account/presence') {
@@ -321,6 +330,10 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
         return json(adminAuth.bootstrap(input.username, input.password, authorization?.startsWith('Bearer ') ? authorization.slice(7) : null), 201);
       }
       if (method === 'POST' && path === '/v1/admin/auth/login') {
+        const adminRateKey = `admin:${remoteAddress}`;
+        const authBucket = accountAuthRates.get(adminRateKey) ?? { count: 0, until: time + 60_000 };
+        authBucket.count++; accountAuthRates.set(adminRateKey, authBucket);
+        requireThat(authBucket.count <= 10, 'Demasiados intentos administrativos; espera un minuto', 429);
         const input = await body(request);
         requireThat(adminAuth, 'Autenticación administrativa no configurada', 503);
         return json(adminAuth.login(input.username, input.password));
@@ -353,7 +366,8 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
         // Player account administration. Kept separate from /admin/accounts,
         // which manages operator logins for this panel.
         if (method === 'GET' && path === '/v1/admin/player-accounts') {
-          return json({ items: store.listPlayerAccounts(url.searchParams.get('q') ?? '', offset(url)) });
+          const start = offset(url), items = store.listPlayerAccounts(url.searchParams.get('q') ?? '', start);
+          return json({ items, nextOffset: items.length === 50 ? start + 50 : null });
         }
         const playerAccountMatch = path.match(/^\/v1\/admin\/player-accounts\/([a-f0-9]{32})$/);
         if (playerAccountMatch && method === 'PATCH') {
@@ -379,16 +393,18 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
         }
         const accountOwnersMatch = path.match(/^\/v1\/admin\/account-cosmetics\/owners\/([a-z0-9_-]+)$/);
         if (accountOwnersMatch && method === 'GET') {
-          return json({ items: store.accountOwners(accountOwnersMatch[1], offset(url)) });
+          const start = offset(url), items = store.accountOwners(accountOwnersMatch[1], start);
+          return json({ items, nextOffset: items.length === 50 ? start + 50 : null });
         }
 
         // Orders and manual fulfillment. The operator must verify the payment
         // outside this panel and record its real, unique reference here.
         if (method === 'GET' && path === '/v1/admin/orders') {
           requireThat(commerce, 'Comercio no configurado', 503);
-          return json({ items: commerce.listAdmin({
-            status: url.searchParams.get('status') ?? '', query: url.searchParams.get('q') ?? '', offset: offset(url),
-          }) });
+          const start = offset(url), items = commerce.listAdmin({
+            status: url.searchParams.get('status') ?? '', query: url.searchParams.get('q') ?? '', offset: start,
+          });
+          return json({ items, nextOffset: items.length === 50 ? start + 50 : null });
         }
         const fulfillOrderMatch = path.match(/^\/v1\/admin\/orders\/([0-9a-f-]{36})\/fulfill$/i);
         if (method === 'POST' && fulfillOrderMatch) {
@@ -405,12 +421,13 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
         // Player search
         if (method === 'GET' && path === '/v1/admin/players') {
           const query = url.searchParams.get('q') ?? '';
-          return json({ items: store.searchPlayers(query, offset(url)) });
+          const start = offset(url), items = store.searchPlayers(query, start);
+          return json({ items, nextOffset: items.length === 50 ? start + 50 : null });
         }
 
         // Catalog, grants, revocations, owners, audit, menu
         if (method === 'GET' && path === '/v1/admin/cosmetics/catalog') {
-          const items = store.catalog(true, offset(url)).map(item => {
+          const start = offset(url), items = store.catalog(true, start).map(item => {
             const petAnimation=store.getPetAnimation(item.id);
             let names=[];
             if (petAnimation?.file_path && resourceDir) {
@@ -419,7 +436,7 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
             return { ...item, product: store.product(item.id), resource: store.getResource(item.id) || null,
               files: store.getResourceFiles(item.id), petAnimation: petAnimation ? { ...petAnimation,names } : null };
           });
-          return json({ items });
+          return json({ items, nextOffset: items.length === 50 ? start + 50 : null });
         }
         const itemMatch = path.match(/^\/v1\/admin\/cosmetics\/catalog\/([a-z0-9_-]+)$/);
         if (method === 'PUT' && itemMatch) {
@@ -677,10 +694,19 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
         if (method === 'POST' && ['/v1/admin/cosmetics/grants', '/v1/admin/cosmetics/revocations'].includes(path))
           return json(store.entitlement(await body(request), path.endsWith('/grants'), actor));
         const ownersMatch = path.match(/^\/v1\/admin\/cosmetics\/owners\/([a-z0-9_-]+)$/);
-        if (method === 'GET' && ownersMatch) return json({ items: store.owners(ownersMatch[1], offset(url)) });
-        if (method === 'GET' && path === '/v1/admin/audit') return json({ items: store.auditPage(offset(url)) });
+        if (method === 'GET' && ownersMatch) {
+          const start = offset(url), items = store.owners(ownersMatch[1], start);
+          return json({ items, nextOffset: items.length === 50 ? start + 50 : null });
+        }
+        if (method === 'GET' && path === '/v1/admin/audit') {
+          const start = offset(url), items = store.auditPage(start);
+          return json({ items, nextOffset: items.length === 50 ? start + 50 : null });
+        }
         if (method === 'PUT' && path === '/v1/admin/pause-menu') return json(store.saveMenu(await body(request), actor));
-        if (method === 'GET' && path === '/v1/admin/pause-menu/history') return json({ items: store.menuHistory(offset(url)) });
+        if (method === 'GET' && path === '/v1/admin/pause-menu/history') {
+          const start = offset(url), items = store.menuHistory(start);
+          return json({ items, nextOffset: items.length === 50 ? start + 50 : null });
+        }
         if (method === 'POST' && path === '/v1/admin/pause-menu/restore') return json(store.restoreMenu(await body(request), actor));
         if (method === 'DELETE' && path.startsWith('/v1/admin/pause-menu/history/')) {
           const rev = Number(path.slice('/v1/admin/pause-menu/history/'.length));

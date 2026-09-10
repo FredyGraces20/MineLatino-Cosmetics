@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { createHash } from 'node:crypto';
 
 export class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -11,6 +12,13 @@ export function text(value, max = 80) {
 export function uuid(value) {
   requireThat(typeof value === 'string' && /^(?:[a-f\d]{32}|[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12})$/i.test(value), 'UUID inválido');
   return value.replaceAll('-', '').toLowerCase();
+}
+export function offlineUuid(name) {
+  requireThat(typeof name === 'string' && /^[A-Za-z0-9_]{3,16}$/.test(name), 'Nombre de Minecraft inválido');
+  const digest = createHash('md5').update(`OfflinePlayer:${name}`, 'utf8').digest();
+  digest[6] = (digest[6] & 0x0f) | 0x30;
+  digest[8] = (digest[8] & 0x3f) | 0x80;
+  return digest.toString('hex');
 }
 export function cosmeticId(value) {
   requireThat(typeof value === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value), 'ID de cosmético inválido');
@@ -332,6 +340,8 @@ export class Store {
 
   createPlayerAccount(input) {
     const now = Date.now();
+    requireThat(!this.db.prepare("SELECT 1 FROM player_accounts WHERE nick=? COLLATE NOCASE AND status='active'").get(input.nick),
+      'Ya existe una cuenta activa con ese nick', 409);
     this.db.prepare(`INSERT INTO player_accounts(account_id,email,nick,password_hash,password_salt,status,created_at,updated_at)
       VALUES(?,?,?,?,?,'active',?,?)`).run(input.accountId, input.email, input.nick, input.passwordHash, input.passwordSalt, now, now);
     this.audit(`account:${input.accountId}`, 'player-account.create', { accountId: input.accountId, nick: input.nick });
@@ -366,6 +376,9 @@ export class Store {
     requireThat(['active','suspended','deleted'].includes(status), 'Estado inválido');
     const duplicate = this.db.prepare('SELECT account_id FROM player_accounts WHERE email=? COLLATE NOCASE AND account_id<>?').get(email, accountId);
     requireThat(!duplicate, 'Ya existe una cuenta con ese correo', 409);
+    const duplicateNick = this.db.prepare(`SELECT account_id FROM player_accounts
+      WHERE nick=? COLLATE NOCASE AND status='active' AND account_id<>?`).get(nick, accountId);
+    requireThat(status !== 'active' || !duplicateNick, 'Ya existe una cuenta activa con ese nick', 409);
     const passwordHash = input.passwordHash ?? row.password_hash, passwordSalt = input.passwordSalt ?? row.password_salt;
     const now = Date.now(), deletedAt = status === 'deleted' ? (row.deleted_at ?? now) : null;
     this.db.prepare(`UPDATE player_accounts SET email=?,nick=?,status=?,password_hash=?,password_salt=?,updated_at=?,deleted_at=? WHERE account_id=?`)
@@ -462,6 +475,12 @@ export class Store {
   updateAccountPresence(accountId, profileUuid, name, now = Date.now()) {
     profileUuid = uuid(profileUuid); name = text(name, 16);
     requireThat(/^[A-Za-z0-9_]{3,16}$/.test(name), 'Nombre de Minecraft inválido');
+    const duplicateNick = this.db.prepare(`SELECT COUNT(*) count FROM player_accounts
+      WHERE nick=? COLLATE NOCASE AND status='active'`).get(name).count;
+    requireThat(duplicateNick === 1, 'Este nick pertenece a varias cuentas; elige un nick único para mostrar cosméticos', 409);
+    requireThat(profileUuid === offlineUuid(name), 'El UUID del servidor no corresponde al nick de tu cuenta', 409);
+    const claimed = this.db.prepare('SELECT account_id FROM account_presence WHERE profile_uuid=? AND account_id<>?').get(profileUuid, accountId);
+    requireThat(!claimed, 'Esta identidad ya está vinculada a otra cuenta', 409);
     this.db.prepare(`INSERT INTO account_presence VALUES(?,?,?,?) ON CONFLICT(account_id)
       DO UPDATE SET profile_uuid=excluded.profile_uuid,name=excluded.name,updated_at=excluded.updated_at`)
       .run(accountId, profileUuid, name, now);
@@ -469,8 +488,11 @@ export class Store {
   }
 
   accountAppearanceByIdentity(profileUuid, name, freshAfter) {
-    const row = this.db.prepare(`SELECT account_id,profile_uuid,name FROM account_presence WHERE updated_at>=?
-      AND (profile_uuid=? OR name=? COLLATE NOCASE) ORDER BY updated_at DESC LIMIT 1`).get(freshAfter, profileUuid, name);
+    const row = this.db.prepare(`SELECT p.account_id,p.profile_uuid,p.name FROM account_presence p
+      JOIN player_accounts a ON a.account_id=p.account_id
+      WHERE p.updated_at>=? AND a.status='active'
+        AND ((?<>'' AND p.profile_uuid=?) OR (?<>'' AND p.name=? COLLATE NOCASE))
+      ORDER BY p.updated_at DESC LIMIT 1`).get(freshAfter, profileUuid, profileUuid, name, name);
     return row ? { accountId: row.account_id, uuid: row.profile_uuid, name: row.name, equipped: this.accountAppearance(row.account_id) } : undefined;
   }
 

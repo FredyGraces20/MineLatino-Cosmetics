@@ -77,9 +77,13 @@ export class AdminAuth {
     // Check session tokens first
     this.prune();
     const session = this.sessions.get(hash(value).toString('hex'));
-    if (session) return { username: session.username, role: session.role };
+    if (session) {
+      const current = this.store.getAdmin(session.username);
+      if (current) return { username: current.username, role: current.role };
+      this.sessions.delete(hash(value).toString('hex'));
+    }
     // Fall back to bootstrap token
-    if (bootstrapToken && timingSafeEqual(hash(value), hash(bootstrapToken))) {
+    if (this.store.adminCount() === 0 && bootstrapToken && timingSafeEqual(hash(value), hash(bootstrapToken))) {
       return { username: 'local-admin', role: 'superadmin' };
     }
     return null;

@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -31,6 +32,16 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class ResourceCache {
     private static final Logger LOG = LoggerFactory.getLogger("MineLatino Cosmetics");
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
+    private record LimitedResponse(int statusCode, byte[] body) {}
+
+    private LimitedResponse sendLimited(HttpRequest request, int maxBytes) throws Exception {
+        HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        try (InputStream input = response.body()) {
+            byte[] bytes = input.readNBytes(maxBytes + 1);
+            if (bytes.length > maxBytes) throw new IOException("Response exceeds limit");
+            return new LimitedResponse(response.statusCode(), bytes);
+        }
+    }
 
     private final String baseUrl;
     private final HttpClient http;
@@ -181,9 +192,9 @@ public final class ResourceCache {
     }
 
     private byte[] download(String id, String query) throws Exception {
-        var response = http.send(HttpRequest.newBuilder(URI.create(baseUrl + "/v1/resources/" + id + "?" + query))
-                .timeout(TIMEOUT).GET().build(), HttpResponse.BodyHandlers.ofByteArray());
-        if (response.statusCode() != 200 || response.body().length > 2*1024*1024)
+        var response = sendLimited(HttpRequest.newBuilder(URI.create(baseUrl + "/v1/resources/" + id + "?" + query))
+                .timeout(TIMEOUT).GET().build(), 2 * 1024 * 1024);
+        if (response.statusCode() != 200)
             throw new IOException("Missing/invalid cosmetic resource " + query + " HTTP " + response.statusCode());
         return response.body();
     }
@@ -194,8 +205,8 @@ public final class ResourceCache {
                 .uri(URI.create(baseUrl + "/v1/resources/" + cosmeticId + "?type=manifest"))
                 .timeout(TIMEOUT).header("Cache-Control", "no-cache").header("Accept", "application/json").GET();
         if (disk != null) manifestRequest.header("If-None-Match", "\"" + disk.version() + "\"");
-        HttpResponse<String> manifestResponse;
-        try { manifestResponse = http.send(manifestRequest.build(), HttpResponse.BodyHandlers.ofString()); }
+        LimitedResponse manifestResponse;
+        try { manifestResponse = sendLimited(manifestRequest.build(), 1024 * 1024); }
         catch (Exception e) {
             if (disk != null) {
                 CosmeticsDiagnostics.event("RESOURCE_DISK_STALE", CosmeticsDiagnostics.id(cosmeticId));
@@ -211,7 +222,7 @@ public final class ResourceCache {
             if (disk != null) return disk.data();
             throw new IOException("Resource manifest unavailable: HTTP " + manifestResponse.statusCode());
         }
-        var manifest = com.google.gson.JsonParser.parseString(manifestResponse.body()).getAsJsonObject();
+        var manifest = com.google.gson.JsonParser.parseString(new String(manifestResponse.body(), StandardCharsets.UTF_8)).getAsJsonObject();
         String version = manifest.has("resourceVersion") ? manifest.get("resourceVersion").getAsString() : "";
         if (!version.matches("[a-f0-9]{12}")) throw new IOException("Resource manifest has no valid version");
         var files = new java.util.HashMap<String, Boolean>();
@@ -225,7 +236,7 @@ public final class ResourceCache {
         HttpRequest texReq = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/v1/resources/" + cosmeticId + "?" + revision))
                 .timeout(TIMEOUT).header("Cache-Control", "no-cache").header("Accept", "image/png").GET().build();
-        HttpResponse<byte[]> texRes = http.send(texReq, HttpResponse.BodyHandlers.ofByteArray());
+        LimitedResponse texRes = sendLimited(texReq, 2 * 1024 * 1024);
         CosmeticsDiagnostics.event("RESOURCE_PNG",CosmeticsDiagnostics.id(cosmeticId)+" status="+texRes.statusCode());
         if (texRes.statusCode() == 200) {
             byte[] data = texRes.body();
@@ -238,10 +249,10 @@ public final class ResourceCache {
         HttpRequest modelReq = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/v1/resources/" + cosmeticId + "?type=model&" + revision))
                 .timeout(TIMEOUT).header("Cache-Control", "no-cache").header("Accept", "application/json").GET().build();
-        HttpResponse<String> modelRes = http.send(modelReq, HttpResponse.BodyHandlers.ofString());
+        LimitedResponse modelRes = sendLimited(modelReq, 2 * 1024 * 1024);
         CosmeticsDiagnostics.event("RESOURCE_MODEL",CosmeticsDiagnostics.id(cosmeticId)+" status="+modelRes.statusCode());
         if (modelRes.statusCode() == 200) {
-            String json = modelRes.body();
+            String json = new String(modelRes.body(), StandardCharsets.UTF_8);
             if (json == null || json.length() > 2 * 1024 * 1024) throw new IOException("Invalid model size");
             model = CosmeticModel.parse(json);
             modelJson = json;

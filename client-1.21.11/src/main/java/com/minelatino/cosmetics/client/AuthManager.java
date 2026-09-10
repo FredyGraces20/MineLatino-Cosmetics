@@ -1,6 +1,9 @@
 package com.minelatino.cosmetics.client;
 
 import com.mojang.authlib.exceptions.AuthenticationException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.concurrent.CompletableFuture;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.User;
@@ -50,6 +53,14 @@ public final class AuthManager {
         return state == State.CONNECTED && session != null && !session.isExpired();
     }
 
+    /** Refreshes the short-lived offline identity proof without changing ownership. */
+    public void refreshAccountPresence(String username) throws Exception {
+        if (accountToken == null || accountId == null || accountExpiresAt <= System.currentTimeMillis()) return;
+        ApiClient.AccountInfo account = api.accountSession(accountToken, offlineUuid(username), username);
+        if (!accountId.equalsIgnoreCase(account.accountId()) || !"active".equals(account.status()))
+            throw new SecurityException("The cosmetics backend returned a different MineLatino account");
+    }
+
     /**
      * Runs the full premium verification flow off-thread. There is deliberately
      * no UUID/nickname fallback: only Mojang's hasJoined response can establish
@@ -72,7 +83,7 @@ public final class AuthManager {
             try {
                 LOG.info("Attempting auth with backend URL: {}", api.getBaseUrl());
                 if (accountToken != null && accountId != null && accountExpiresAt > System.currentTimeMillis()) {
-                    ApiClient.AccountInfo account = api.accountSession(accountToken, profileId, username);
+                    ApiClient.AccountInfo account = api.accountSession(accountToken, offlineUuid(username), username);
                     if (!accountId.equalsIgnoreCase(account.accountId()) || !"active".equals(account.status()))
                         throw new SecurityException("The cosmetics backend returned a different MineLatino account");
                     Session newSession = new Session(accountToken, accountId, account.nick(), accountExpiresAt);
@@ -115,6 +126,15 @@ public final class AuthManager {
             }
         });
         return pendingAuth;
+    }
+
+    /** UUID used by an offline-mode Minecraft server for this exact nick. */
+    private static String offlineUuid(String username) throws Exception {
+        byte[] digest = MessageDigest.getInstance("MD5")
+            .digest(("OfflinePlayer:" + username).getBytes(StandardCharsets.UTF_8));
+        digest[6] = (byte) ((digest[6] & 0x0f) | 0x30);
+        digest[8] = (byte) ((digest[8] & 0x3f) | 0x80);
+        return HexFormat.of().formatHex(digest);
     }
 
     /**

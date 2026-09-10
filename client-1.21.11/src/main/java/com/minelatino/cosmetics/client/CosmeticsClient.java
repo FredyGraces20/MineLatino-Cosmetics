@@ -45,6 +45,9 @@ public final class CosmeticsClient {
     /** Auto-authentication and renewal use a long cooldown to protect Mojang and the backend. */
     private long lastReconnectAttempt = 0;
     private static final long RECONNECT_COOLDOWN = 300_000;
+    private static final long PRESENCE_REFRESH_INTERVAL = 15 * 60_000;
+    private long lastPresenceRefresh = 0;
+    private volatile boolean presenceRefreshing = false;
 
     private CosmeticsClient(CosmeticsConfig config, Path cacheDir) {
         this.api = new ApiClient(config.backendUrl(), config.hasAccountSession());
@@ -63,7 +66,7 @@ public final class CosmeticsClient {
                     CosmeticsConfig config = CosmeticsConfig.read(Minecraft.getInstance().gameDirectory.toPath());
                     Path cacheDir = Minecraft.getInstance().gameDirectory.toPath().resolve("cache").resolve("minelatino-cosmetics");
                     instance = new CosmeticsClient(config, cacheDir);
-                    CosmeticsDiagnostics.event("START","build=alpha.26 minecraft=1.21.11 java="+System.getProperty("java.version"));
+                    CosmeticsDiagnostics.event("START","build=alpha.27 minecraft=1.21.11 java="+System.getProperty("java.version"));
                     LOG.info("Cosmetics backend: {}", config.backendUrl());
                 }
             }
@@ -103,6 +106,18 @@ public final class CosmeticsClient {
             } catch (IllegalArgumentException ignored) {
                 LOG.warn("Ignoring invalid verified session UUID for local cosmetics");
             }
+        }
+
+        if (mc.player != null && auth.isConnected() && !presenceRefreshing
+                && System.currentTimeMillis() - lastPresenceRefresh >= PRESENCE_REFRESH_INTERVAL) {
+            lastPresenceRefresh = System.currentTimeMillis();
+            presenceRefreshing = true;
+            String username = mc.getUser().getName();
+            CompletableFuture.runAsync(() -> {
+                try { auth.refreshAccountPresence(username); }
+                catch (Exception e) { LOG.debug("Account presence refresh failed", e); }
+                finally { presenceRefreshing = false; }
+            });
         }
 
         // Keep the default 1.21.11 profile behaviour aligned with 1.21.4: link
@@ -218,7 +233,7 @@ public final class CosmeticsClient {
         Session s=auth.session();
         String server=mc.player==null ? "none" : WardrobeController.normalize(mc.player.getUUID().toString());
         String owner=s==null ? "none" : WardrobeController.normalize(s.uuid());
-        String state="build=alpha.26 minecraft=1.21.11\naccountUuid="+mc.getUser().getProfileId()+
+        String state="build=alpha.27 minecraft=1.21.11\naccountUuid="+mc.getUser().getProfileId()+
                 "\nserverUuid="+server+"\nsessionUuid="+owner+"\nauth="+auth.state()+
                 "\nsessionValid="+auth.isConnected()+"\nwardrobe="+wardrobe.snapshot().phase()+
                 "\nowned="+wardrobe.snapshot().owned().size()+"\nconfirmed="+wardrobe.snapshot().equipped()+

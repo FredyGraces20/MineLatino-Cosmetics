@@ -28,8 +28,10 @@ const publicDir = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'publ
 // premium login during an incident, but never enables an offline UUID bypass.
 const premiumEnabled = process.env.COSMETICS_ENABLE_PREMIUM !== 'false';
 const api = createApi({ store, adminToken, adminAuth, accountAuth, commerce, resourceDir, origin, premiumEnabled });
+const trustedProxyAddresses = (process.env.COSMETICS_TRUSTED_PROXY_ADDRESSES || '').split(',').map(value => value.trim()).filter(Boolean);
 const server = createHttpServer(api, origin, publicDir, {
   trustRailwayProxy: !!process.env.RAILWAY_ENVIRONMENT_ID,
+  trustedProxyAddresses,
 });
 const host = process.env.HOST || '127.0.0.1';
 server.listen(port, host, () => console.log(`MineLatino Cosmetics API: http://${host}:${port}`));
