@@ -3,6 +3,6 @@
   "package": "com.minelatino.cosmetics.client.mixin",
   "compatibilityLevel": "JAVA_21",
   "refmap": "minelatino_cosmetics.refmap.json",
-  "client": ["PauseScreenMixin", "LivingEntityRendererAccessor", "PlayerRendererMixin", "PlayerModelMixin", "MinecraftMixin"],
+  "client": ["PauseScreenMixin", "LivingEntityRendererAccessor", "PlayerRendererMixin", "MinecraftMixin"],
   "injectors": { "defaultRequire": 1 }
 }

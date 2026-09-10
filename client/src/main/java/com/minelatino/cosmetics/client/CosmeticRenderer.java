@@ -105,12 +105,6 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
             ResourceCache.CachedResource res = resourceCache.getOrDownload(item.cosmeticId());
             if (res == null || res.texture() == null) { pendingResources++; continue; }
 
-            if ("SKIN".equals(item.slot())) {
-                if (res.avatar() != null) { renderAvatar(poseStack,bufferSource,packedLight,renderState,res); submitted++; }
-                else pendingResources++;
-                continue;
-            }
-
             CosmeticModel model = res.model();
             if (model != null && !model.elements.isEmpty()) {
                 renderModel(poseStack, bufferSource, packedLight, renderState, res, model, item.slot(), item.cosmeticId());
@@ -123,78 +117,6 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
         if(local) CosmeticsDiagnostics.changed("WORLD_RENDER","equipped="+equipped.size()+" submitted="+submitted+
                 " resourcesUnavailable="+pendingResources+" unsupportedSlots="+unsupported);
     }
-
-    /** Used by PlayerModelMixin to suppress the vanilla body only after a valid replacement is ready. */
-    public static boolean hasReadySkin(PlayerRenderState state) {
-        List<EquipmentCache.EquippedItem> equipped=equipmentFor(state.id);
-        if(equipped==null)return false;
-        for(var item:equipped)if("SKIN".equals(item.slot())){var resource=CosmeticsClient.instance().resources().getOrDownload(item.cosmeticId());return resource!=null&&resource.avatar()!=null;}
-        return false;
-    }
-
-    private static List<EquipmentCache.EquippedItem> equipmentFor(int entityId){
-        CosmeticPreview.Frame preview=CosmeticPreview.FRAME.get();if(preview!=null&&preview.entityId==entityId)return preview.items;
-        UUID uuid=ENTITY_UUID_MAP.get(entityId);if(Minecraft.getInstance().player!=null&&Minecraft.getInstance().player.getId()==entityId&&CosmeticsClient.instance().auth().isConnected()&&CosmeticsClient.instance().auth().session()!=null)try{uuid=UUID.fromString(formatUuid(CosmeticsClient.instance().auth().session().uuid()));}catch(IllegalArgumentException ignored){}
-        return uuid==null?null:CosmeticsClient.instance().equipment().get(uuid.toString());
-    }
-
-    private void renderAvatar(PoseStack stack,MultiBufferSource buffers,int light,PlayerRenderState state,ResourceCache.CachedResource resource){
-        AvatarPackage avatar=resource.avatar();String clip=AvatarEmoteState.clip(state.id);
-        double seconds=AvatarEmoteState.seconds(state.id);
-        if(clip==null){clip=movementClip(avatar.animations(),state);seconds=state.ageInTicks/20.0;}
-        VertexConsumer consumer=buffers.getBuffer(RenderType.entityCutoutNoCull(resource.texture()));
-        boolean rightMain=state.mainArm==net.minecraft.world.entity.HumanoidArm.RIGHT;
-        AvatarAnimation.Context animationContext=new AvatarAnimation.Context(state.yRot,state.xRot,state.walkAnimationSpeed,0,
-                !state.getMainHandItem().isEmpty(),!(rightMain?state.leftHandItem:state.rightHandItem).isEmpty(),!state.headEquipment.isEmpty());
-        stack.pushPose();try{
-            // Bedrock/Gecko geometry uses pixels, Y-up and +Z forward. Mirror X and
-            // Y to enter Minecraft's model space; flipping Z here turns the entire
-            // avatar around and makes it face backwards relative to the player.
-            stack.translate(0,1.5,0);stack.scale(-1,-1,1);
-            for(AvatarModel.Bone root:avatar.model().roots())renderAvatarBone(stack,consumer,light,avatar,root,clip,seconds,state.ageInTicks/20.0,animationContext);
-        }finally{stack.popPose();}
-    }
-
-    private static String movementClip(AvatarAnimation animations,PlayerRenderState state){
-        List<String> candidates;
-        if(state.deathTime>0)candidates=List.of("death");
-        else if(state.bedOrientation!=null)candidates=List.of("sleep");
-        else if(state.isAutoSpinAttack)candidates=List.of("riptide");
-        else if(state.hasRedOverlay)candidates=List.of("attacked");
-        else if(state.isUsingItem)candidates=state.useItemHand==net.minecraft.world.InteractionHand.OFF_HAND?List.of("use_offhand","use_mainhand"):List.of("use_mainhand","use_offhand");
-        else if(state.attackTime>0)candidates=List.of("swing_hand");
-        else if(state.isFallFlying)candidates=List.of("elytra_fly","fly");
-        else if(state.isVisuallySwimming)candidates=List.of("swim");
-        else if(state.isInWater)candidates=List.of("swim_stand","swim");
-        else if(state.isPassenger)candidates=List.of("ride","boat","sit");
-        else if(state.isCrouching)candidates=List.of(state.walkAnimationSpeed>.02f?"sneak":"sneaking");
-        else if(state.walkAnimationSpeed>.75f)candidates=List.of("run","walk");
-        else if(state.walkAnimationSpeed>.02f)candidates=List.of("walk","run");
-        else candidates=List.of("idle");
-        for(String candidate:candidates)
-            for(String name:animations.names())if(name.equals(candidate)||name.endsWith("."+candidate))return name;
-        return null;
-    }
-
-    private static void renderAvatarBone(PoseStack stack,VertexConsumer consumer,int light,AvatarPackage avatar,AvatarModel.Bone bone,String clip,double seconds,double ambientSeconds,AvatarAnimation.Context context){
-        AvatarAnimation.Pose animation=avatar.animations().sampleLayered(clip,bone.name(),seconds,ambientSeconds,context);
-        float[]p=bone.pivot(),r=bone.rotation(),ar=animation.rotation();stack.pushPose();try{
-            // YSM/Gecko bake: translation(-X,+Y,+Z), pivot(-X,+Y,+Z),
-            // rotation(-X,-Y,+Z). Applying raw Blockbench values directly makes
-            // left/right bones cross over and rotates accessories inside-out.
-            stack.translate(-animation.position()[0]/16.0,animation.position()[1]/16.0,animation.position()[2]/16.0);
-            stack.translate(-p[0]/16.0,p[1]/16.0,p[2]/16.0);
-            stack.mulPose(new Quaternionf().rotationZYX((float)Math.toRadians(r[2]+ar[2]),(float)Math.toRadians(-(r[1]+ar[1])),(float)Math.toRadians(-(r[0]+ar[0]))));
-            stack.scale(animation.scale()[0],animation.scale()[1],animation.scale()[2]);stack.translate(p[0]/16.0,-p[1]/16.0,-p[2]/16.0);
-            for(AvatarModel.Cube cube:bone.cubes())renderAvatarCube(stack,consumer,light,avatar.model(),cube);
-            for(AvatarModel.Bone child:avatar.model().children(bone.name()))renderAvatarBone(stack,consumer,light,avatar,child,clip,seconds,ambientSeconds,context);
-        }finally{stack.popPose();}
-    }
-
-    private static void renderAvatarCube(PoseStack stack,VertexConsumer consumer,int light,AvatarModel model,AvatarModel.Cube cube){
-        stack.pushPose();try{float[]p=cube.pivot(),r=cube.rotation();stack.translate(-p[0]/16.0,p[1]/16.0,p[2]/16.0);stack.mulPose(new Quaternionf().rotationZYX((float)Math.toRadians(r[2]),(float)Math.toRadians(-r[1]),(float)Math.toRadians(-r[0])));stack.translate(p[0]/16.0,-p[1]/16.0,-p[2]/16.0);
-            PoseStack.Pose pose=stack.last();for(AvatarGeometry.Quad quad:AvatarGeometry.bake(model,cube))for(float[]vertex:quad.vertices())addVertex(consumer,pose,vertex,light,quad.normal());
-        }finally{stack.popPose();}}
 
     private static String formatUuid(String value) {
         String hex = value.replace("-", "");

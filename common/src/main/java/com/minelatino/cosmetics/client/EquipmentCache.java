@@ -88,8 +88,8 @@ public final class EquipmentCache {
                     throw new IllegalArgumentException("Appearance response contains an invalid UUID");
                 }
                 List<EquippedItem> items = player.equipped() == null ? List.of()
-                    : player.equipped().stream().map(e -> {
-                        if (e == null || e.slot() == null || !Set.of("CAPE", "HAT", "WINGS", "BACKPACK", "PET", "SKIN").contains(e.slot())
+                    : player.equipped().stream().filter(e -> e != null && CosmeticSlot.from(e.slot()).isPresent()).map(e -> {
+                        if (e == null || e.slot() == null || !Set.of("CAPE", "HAT", "WINGS", "BACKPACK", "PET").contains(e.slot())
                                 || e.cosmeticId() == null || !e.cosmeticId().matches("[a-z0-9_-]{1,64}")) {
                             throw new IllegalArgumentException("Appearance response contains invalid equipment");
                         }
@@ -140,7 +140,8 @@ public final class EquipmentCache {
      */
     public synchronized void setEquipped(String uuid, List<EquippedItem> items) {
         mutationVersion++;
-        cache.put(WardrobeController.normalize(uuid), new CachedEntry(List.copyOf(items), System.currentTimeMillis()));
+        cache.put(WardrobeController.normalize(uuid), new CachedEntry(items.stream()
+                .filter(e -> e != null && CosmeticSlot.from(e.slot()).isPresent()).toList(), System.currentTimeMillis()));
     }
 
     /**

@@ -4,7 +4,7 @@ import java.util.Optional;
 
 /** Wire IDs must agree with the service; labels are presentation only. */
 public enum CosmeticSlot {
-    HAT("Cabeza"), CAPE("Capa"), WINGS("Alas"), BACKPACK("Mochila"), PET("Mascota"), SKIN("Skins");
+    HAT("Cabeza"), CAPE("Capa"), WINGS("Alas"), BACKPACK("Mochila"), PET("Mascota");
     private final String label;
     CosmeticSlot(String label) { this.label = label; }
     public String label() { return label; }

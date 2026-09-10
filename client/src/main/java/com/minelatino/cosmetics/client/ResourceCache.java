@@ -40,7 +40,6 @@ public final class ResourceCache {
     private final Map<String, CosmeticModel> models = new ConcurrentHashMap<>();
     private final Map<String, Map<String, Material>> materials = new ConcurrentHashMap<>();
     private final Map<String, PetAnimation> petAnimations = new ConcurrentHashMap<>();
-    private final Map<String, AvatarPackage> avatars = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<CachedResource>> pending = new ConcurrentHashMap<>();
     private final Map<String, Long> nextRefresh = new ConcurrentHashMap<>();
     private volatile long generation;
@@ -51,9 +50,9 @@ public final class ResourceCache {
     public void retry(String id) { nextRefresh.remove(id); errors.remove(id); }
 
     public record Material(ResourceLocation texture, TextureAnimation animation) {}
-    public record CachedResource(ResourceLocation texture, CosmeticModel model, Map<String, Material> materials, PetAnimation petAnimation, AvatarPackage avatar) {}
+    public record CachedResource(ResourceLocation texture, CosmeticModel model, Map<String, Material> materials, PetAnimation petAnimation) {}
     private CachedResource cached(String id, ResourceLocation texture, CosmeticModel model) {
-        return new CachedResource(texture, model, materials.getOrDefault(id, Map.of()), petAnimations.getOrDefault(id, PetAnimation.none()), avatars.get(id));
+        return new CachedResource(texture, model, materials.getOrDefault(id, Map.of()), petAnimations.getOrDefault(id, PetAnimation.none()));
     }
 
     public ResourceCache(String baseUrl, Path cacheDir) {
@@ -129,8 +128,7 @@ public final class ResourceCache {
     private record TextureData(byte[] png, String mcmeta) {}
     private record DownloadData(byte[] texturePng, CosmeticModel model, String modelJson,
                                 Map<String, TextureData> materials, PetAnimation petAnimation,
-                                String petAnimationJson, String petAnimationName, AvatarPackage avatar,
-                                byte[] avatarZip, String version) {}
+                                String petAnimationJson, String petAnimationName, String version) {}
     private record DiskBundle(String version, DownloadData data) {}
 
     private static byte[] boundedRead(Path path) throws IOException {
@@ -138,7 +136,6 @@ public final class ResourceCache {
         if (size <= 0 || size > 2 * 1024 * 1024) throw new IOException("Invalid cached resource size");
         return Files.readAllBytes(path);
     }
-    private static byte[] boundedAvatarRead(Path path) throws IOException { long size=Files.size(path);if(size<=0||size>32*1024*1024)throw new IOException("Invalid cached avatar size");return Files.readAllBytes(path); }
 
     private DiskBundle readDisk(String id) {
         Path dir = cacheDir.resolve(id);
@@ -147,9 +144,7 @@ public final class ResourceCache {
             try (var input = Files.newInputStream(dir.resolve("metadata.properties"))) { meta.load(input); }
             String version = meta.getProperty("version", "");
             if (!version.matches("[a-f0-9]{12}")) throw new IOException("Invalid cache version");
-            byte[] avatarZip=Files.exists(dir.resolve("avatar.zip"))?boundedAvatarRead(dir.resolve("avatar.zip")):null;
-            AvatarPackage avatar=avatarZip==null?null:AvatarPackage.parse(avatarZip);
-            byte[] primary = avatar==null?boundedRead(dir.resolve("texture.png")):avatar.texturePng();
+            byte[] primary = boundedRead(dir.resolve("texture.png"));
             String modelJson = Files.exists(dir.resolve("model.json"))
                     ? Files.readString(dir.resolve("model.json"), StandardCharsets.UTF_8) : null;
             if (modelJson != null && modelJson.length() > 2 * 1024 * 1024) throw new IOException("Cached model too large");
@@ -168,7 +163,7 @@ public final class ResourceCache {
             PetAnimation animation = animationJson == null ? PetAnimation.none()
                     : PetAnimation.parse(animationJson, animationName.isEmpty() ? null : animationName);
             return new DiskBundle(version, new DownloadData(primary, model, modelJson, Map.copyOf(named), animation,
-                    animationJson, animationName.isEmpty() ? null : animationName, avatar, avatarZip, version));
+                    animationJson, animationName.isEmpty() ? null : animationName, version));
         } catch (Exception e) {
             return null;
         }
@@ -188,7 +183,6 @@ public final class ResourceCache {
         try {
             Files.createDirectories(temporary);
             Files.write(temporary.resolve("texture.png"), data.texturePng());
-            if(data.avatarZip()!=null)Files.write(temporary.resolve("avatar.zip"),data.avatarZip());
             if (data.modelJson() != null) Files.writeString(temporary.resolve("model.json"), data.modelJson(), StandardCharsets.UTF_8);
             for (var entry : data.materials().entrySet()) {
                 Files.write(temporary.resolve("material-" + entry.getKey() + ".png"), entry.getValue().png());
@@ -218,7 +212,6 @@ public final class ResourceCache {
             throw new IOException("Missing/invalid cosmetic resource " + query + " HTTP " + response.statusCode());
         return response.body();
     }
-    private byte[] downloadAvatar(String id,String query)throws Exception{var response=http.send(HttpRequest.newBuilder(URI.create(baseUrl+"/v1/resources/"+id+"?"+query)).timeout(TIMEOUT).GET().build(),HttpResponse.BodyHandlers.ofByteArray());if(response.statusCode()!=200||response.body().length>32*1024*1024)throw new IOException("Missing/invalid avatar package HTTP "+response.statusCode());return response.body();}
 
     private DownloadData downloadBoth(String cosmeticId) throws Exception {
         DiskBundle disk = readDisk(cosmeticId);
@@ -253,24 +246,20 @@ public final class ResourceCache {
             if (name.matches("[a-z0-9_]{1,32}")) files.put(name, file.get("hasMcmeta").getAsBoolean());
         }
         String revision = "v=" + version;
-        boolean hasAvatar=manifest.has("hasAvatarPackage")&&manifest.get("hasAvatarPackage").getAsBoolean();
-        byte[] avatarZip=hasAvatar?downloadAvatar(cosmeticId,"type=avatar-package&"+revision):null;
-        AvatarPackage avatar=avatarZip==null?null:AvatarPackage.parse(avatarZip);
         byte[] textureData = null;
-        if(avatar!=null)textureData=avatar.texturePng();
         HttpRequest texReq = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/v1/resources/" + cosmeticId + "?" + revision))
                 .timeout(TIMEOUT).header("Cache-Control", "no-cache").header("Accept", "image/png").GET().build();
-        HttpResponse<byte[]> texRes = textureData==null?http.send(texReq, HttpResponse.BodyHandlers.ofByteArray()):null;
-        CosmeticsDiagnostics.event("RESOURCE_PNG",CosmeticsDiagnostics.id(cosmeticId)+" status="+(texRes==null?"avatar":texRes.statusCode()));
-        if (texRes!=null&&texRes.statusCode() == 200) {
+        HttpResponse<byte[]> texRes = http.send(texReq, HttpResponse.BodyHandlers.ofByteArray());
+        CosmeticsDiagnostics.event("RESOURCE_PNG",CosmeticsDiagnostics.id(cosmeticId)+" status="+texRes.statusCode());
+        if (texRes.statusCode() == 200) {
             byte[] data = texRes.body();
             if (data.length >= 8 && data[0] == (byte) 0x89 && data[1] == (byte) 0x50) {
                 textureData = data;
             }
         }
 
-        if (textureData == null) throw new IOException("Texture unavailable: HTTP " + (texRes==null?"avatar":texRes.statusCode()));
+        if (textureData == null) throw new IOException("Texture unavailable: HTTP " + texRes.statusCode());
         if (textureData.length > 2 * 1024 * 1024) throw new IOException("Texture exceeds 2 MiB");
         // A 404 explicitly denotes a PNG-only asset. Errors must not replace a good model.
         CosmeticModel model = CosmeticModel.empty();
@@ -278,14 +267,14 @@ public final class ResourceCache {
         HttpRequest modelReq = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/v1/resources/" + cosmeticId + "?type=model&" + revision))
                 .timeout(TIMEOUT).header("Cache-Control", "no-cache").header("Accept", "application/json").GET().build();
-        HttpResponse<String> modelRes = avatar==null?http.send(modelReq, HttpResponse.BodyHandlers.ofString()):null;
-        CosmeticsDiagnostics.event("RESOURCE_MODEL",CosmeticsDiagnostics.id(cosmeticId)+" status="+(modelRes==null?"avatar":modelRes.statusCode()));
-        if (modelRes!=null&&modelRes.statusCode() == 200) {
+        HttpResponse<String> modelRes = http.send(modelReq, HttpResponse.BodyHandlers.ofString());
+        CosmeticsDiagnostics.event("RESOURCE_MODEL",CosmeticsDiagnostics.id(cosmeticId)+" status="+modelRes.statusCode());
+        if (modelRes.statusCode() == 200) {
             String json = modelRes.body();
             if (json == null || json.length() > 2 * 1024 * 1024) throw new IOException("Invalid model size");
             model = CosmeticModel.parse(json);
             modelJson = json;
-        } else if (modelRes!=null&&modelRes.statusCode() != 404) {
+        } else if (modelRes.statusCode() != 404) {
             throw new IOException("Model unavailable: HTTP " + modelRes.statusCode());
         }
 
@@ -315,7 +304,7 @@ public final class ResourceCache {
             }
         } catch (IOException ignored) { /* Static cosmetics and older services remain compatible. */ }
         DownloadData result = new DownloadData(textureData, model, modelJson, Map.copyOf(named), petAnimation,
-                petAnimationJson, petAnimationName, avatar, avatarZip, version);
+                petAnimationJson, petAnimationName, version);
         writeDisk(cosmeticId, result);
         return result;
     }
@@ -372,7 +361,6 @@ public final class ResourceCache {
                 .forEach(m -> Minecraft.getInstance().getTextureManager().release(m.texture()));
         models.put(cosmeticId, model);
         petAnimations.put(cosmeticId,data.petAnimation());
-        if(data.avatar()!=null)avatars.put(cosmeticId,data.avatar());else avatars.remove(cosmeticId);
         CosmeticsDiagnostics.event("RESOURCE_READY",CosmeticsDiagnostics.id(cosmeticId)+" elements="+model.elements.size()+" quads="+model.quads.size());
         return cached(cosmeticId, texLoc, model);
     }
@@ -388,7 +376,6 @@ public final class ResourceCache {
         textures.clear();
         models.clear();
         petAnimations.clear();
-        avatars.clear();
         pending.clear();
         nextRefresh.clear();
         errors.clear();

@@ -124,21 +124,6 @@ public final class ApiClient implements WardrobeController.Gateway {
         return appearance(uuids, List.of());
     }
 
-    public void playEmote(String token,String clip,long durationMs)throws Exception{
-        JsonObject body=new JsonObject();body.addProperty("clip",clip);body.addProperty("durationMs",durationMs);
-        HttpResponse<String> response=post("/v1/account/emote",body.toString(),token);
-        if(response.statusCode()!=200)throw responseError(response,"emote");
-    }
-
-    public record ActiveEmote(String uuid,String name,String clip,long startedAt,long expiresAt){}
-    private record ActiveEmotesResponse(List<ActiveEmote> items){}
-    public List<ActiveEmote> emotes(List<String>uuids,List<String>names)throws Exception{
-        HttpResponse<String>response=get("/v1/cosmetics/emotes?uuids="+String.join(",",uuids)+"&names="+String.join(",",names),null);
-        if(response.statusCode()!=200)throw new ApiException(response.statusCode(),"emotes");
-        ActiveEmotesResponse parsed=GSON.fromJson(response.body(),ActiveEmotesResponse.class);
-        return parsed==null||parsed.items()==null?List.of():List.copyOf(parsed.items());
-    }
-
     public AppearanceResponse appearance(List<String> uuids, List<String> names) throws Exception {
         String joined = String.join(",", uuids);
         String joinedNames = String.join(",", names);

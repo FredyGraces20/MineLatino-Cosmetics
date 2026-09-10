@@ -59,16 +59,6 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
         PREVIEW_FRAMES.put(state,frame);
     }
 
-    public static boolean hasReadySkin(AvatarRenderState state){List<EquipmentCache.EquippedItem> equipped=equipmentFor(state);if(equipped==null)return false;for(var item:equipped)if("SKIN".equals(item.slot())){var resource=CosmeticsClient.instance().resources().getOrDownload(item.cosmeticId());return resource!=null&&resource.avatar()!=null;}return false;}
-
-    private static List<EquipmentCache.EquippedItem> equipmentFor(AvatarRenderState state){
-        CosmeticPreview.Frame preview=PREVIEW_FRAMES.get(state);
-        if(preview!=null)return preview.items;
-        UUID uuid=ENTITY_UUID_MAP.get(state.id);
-        if(Minecraft.getInstance().player!=null&&Minecraft.getInstance().player.getId()==state.id&&CosmeticsClient.instance().auth().isConnected()&&CosmeticsClient.instance().auth().session()!=null)try{uuid=UUID.fromString(formatUuid(CosmeticsClient.instance().auth().session().uuid()));}catch(IllegalArgumentException ignored){}
-        return uuid==null?null:CosmeticsClient.instance().equipment().get(uuid.toString());
-    }
-
     @Override
     public void submit(PoseStack poseStack, SubmitNodeCollector collector, int packedLight,
                        AvatarRenderState renderState, float yaw, float partialTick) {
@@ -112,17 +102,6 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
             ResourceCache.CachedResource res = resourceCache.getOrDownload(item.cosmeticId());
             if (res == null || res.texture() == null) { pendingResources++; continue; }
 
-            if ("SKIN".equals(item.slot())) {
-                if(res.avatar()!=null){
-                    // 1.21.11 defers submitted model nodes. Force the shared parent
-                    // model invisible here as a second guard in case another layer
-                    // changed visibility after PlayerModel.setupAnim.
-                    getParentModel().setAllVisible(false);
-                    renderAvatar(poseStack,collector,packedLight,renderState,res);submitted++;
-                }else pendingResources++;
-                continue;
-            }
-
             CosmeticModel model = res.model();
             if (model != null && !model.elements.isEmpty()) {
                 renderModel(poseStack, collector, packedLight, renderState, res, model, item.slot(), item.cosmeticId());
@@ -135,11 +114,6 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
         if(local) CosmeticsDiagnostics.changed("WORLD_RENDER","equipped="+equipped.size()+" submitted="+submitted+
                 " resourcesUnavailable="+pendingResources+" unsupportedSlots="+unsupported);
     }
-
-    private void renderAvatar(PoseStack stack,SubmitNodeCollector collector,int light,AvatarRenderState state,ResourceCache.CachedResource resource){AvatarPackage avatar=resource.avatar();String clip=AvatarEmoteState.clip(state.id);double seconds=AvatarEmoteState.seconds(state.id);if(clip==null){clip=movementClip(avatar.animations(),state);seconds=state.ageInTicks/20.0;}boolean rightMain=state.mainArm==net.minecraft.world.entity.HumanoidArm.RIGHT;AvatarAnimation.Context context=new AvatarAnimation.Context(state.yRot,state.xRot,state.walkAnimationSpeed,0,!state.getMainHandItemStack().isEmpty(),!(rightMain?state.leftHandItemStack:state.rightHandItemStack).isEmpty(),!state.headEquipment.isEmpty());stack.pushPose();try{stack.translate(0,1.5,0);stack.scale(-1,-1,1);for(AvatarModel.Bone root:avatar.model().roots())renderAvatarBone(stack,collector,light,resource.texture(),avatar,root,clip,seconds,state.ageInTicks/20.0,context);}finally{stack.popPose();}}
-    private static String movementClip(AvatarAnimation animations,AvatarRenderState state){List<String>candidates;if(state.deathTime>0)candidates=List.of("death");else if(state.bedOrientation!=null)candidates=List.of("sleep");else if(state.isAutoSpinAttack)candidates=List.of("riptide");else if(state.hasRedOverlay)candidates=List.of("attacked");else if(state.isUsingItem)candidates=state.useItemHand==net.minecraft.world.InteractionHand.OFF_HAND?List.of("use_offhand","use_mainhand"):List.of("use_mainhand","use_offhand");else if(state.attackTime>0)candidates=List.of("swing_hand");else if(state.isFallFlying)candidates=List.of("elytra_fly","fly");else if(state.isVisuallySwimming)candidates=List.of("swim");else if(state.isInWater)candidates=List.of("swim_stand","swim");else if(state.isPassenger)candidates=List.of("ride","boat","sit");else if(state.isCrouching)candidates=List.of(state.walkAnimationSpeed>.02f?"sneak":"sneaking");else if(state.walkAnimationSpeed>.75f)candidates=List.of("run","walk");else if(state.walkAnimationSpeed>.02f)candidates=List.of("walk","run");else candidates=List.of("idle");for(String c:candidates)for(String n:animations.names())if(n.equals(c)||n.endsWith("."+c))return n;return null;}
-    private static void renderAvatarBone(PoseStack stack,SubmitNodeCollector collector,int light,Identifier texture,AvatarPackage avatar,AvatarModel.Bone bone,String clip,double seconds,double ambientSeconds,AvatarAnimation.Context context){AvatarAnimation.Pose a=avatar.animations().sampleLayered(clip,bone.name(),seconds,ambientSeconds,context);float[]p=bone.pivot(),r=bone.rotation(),ar=a.rotation();stack.pushPose();try{stack.translate(-a.position()[0]/16.0,a.position()[1]/16.0,a.position()[2]/16.0);stack.translate(-p[0]/16.0,p[1]/16.0,p[2]/16.0);stack.mulPose(new Quaternionf().rotationZYX((float)Math.toRadians(r[2]+ar[2]),(float)Math.toRadians(-(r[1]+ar[1])),(float)Math.toRadians(-(r[0]+ar[0]))));stack.scale(a.scale()[0],a.scale()[1],a.scale()[2]);stack.translate(p[0]/16.0,-p[1]/16.0,-p[2]/16.0);for(AvatarModel.Cube cube:bone.cubes())renderAvatarCube(stack,collector,light,texture,avatar.model(),cube);for(AvatarModel.Bone child:avatar.model().children(bone.name()))renderAvatarBone(stack,collector,light,texture,avatar,child,clip,seconds,ambientSeconds,context);}finally{stack.popPose();}}
-    private static void renderAvatarCube(PoseStack stack,SubmitNodeCollector collector,int light,Identifier texture,AvatarModel model,AvatarModel.Cube cube){stack.pushPose();try{float[]p=cube.pivot(),r=cube.rotation();stack.translate(-p[0]/16.0,p[1]/16.0,p[2]/16.0);stack.mulPose(new Quaternionf().rotationZYX((float)Math.toRadians(r[2]),(float)Math.toRadians(-r[1]),(float)Math.toRadians(-r[0])));stack.translate(p[0]/16.0,-p[1]/16.0,-p[2]/16.0);for(AvatarGeometry.Quad quad:AvatarGeometry.bake(model,cube)){float[][]vertices=quad.vertices();float[]normal=quad.normal();collector.submitCustomGeometry(stack,RenderTypes.entityCutoutNoCull(texture),(pose,consumer)->{for(float[]vertex:vertices)addVertex(consumer,pose,vertex,light,normal);});}}finally{stack.popPose();}}
 
     private static String formatUuid(String value) {
         String hex = value.replace("-", "");

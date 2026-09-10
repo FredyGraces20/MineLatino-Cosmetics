@@ -6,7 +6,7 @@ plugins {
 }
 
 group = 'com.minelatino.cosmetics'
-version = '0.1.0-alpha.25'
+version = '0.1.0-alpha.26'
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 tasks.withType(JavaCompile).configureEach {
@@ -61,8 +61,4 @@ processResources {
     filesMatching('META-INF/mods.toml') {
         expand(version: project.version, mcVersion: mcVersion, forgeVersion: forgeVersion)
     }
-}
-
-tasks.named('jar') {
-    manifest { attributes('MixinConfigs': 'minelatino_cosmetics_avatar.mixins.json') }
 }

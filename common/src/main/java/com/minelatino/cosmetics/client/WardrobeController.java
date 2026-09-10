@@ -64,7 +64,7 @@ public final class WardrobeController {
                         throw new IllegalStateException("El armario pertenece a otro UUID");
                     if (data.owned() == null || data.equipped() == null)
                         throw new IllegalStateException("Respuesta de armario incompleta");
-                    var items = List.copyOf(data.owned());
+                    var items = data.owned().stream().filter(i -> i != null && CosmeticSlot.from(i.slot()).isPresent()).toList();
                     accept(data.equipped(), items, "Armario sincronizado");
                 } catch (Exception e) { fail(e); }
             }
@@ -102,7 +102,8 @@ public final class WardrobeController {
     }
 
     private void accept(List<ApiClient.EquippedEntry> entries, List<ApiClient.CosmeticItem> owned, String message) {
-        var safe = List.copyOf(entries == null ? List.of() : entries);
+        var safe = (entries == null ? List.<ApiClient.EquippedEntry>of() : entries).stream()
+                .filter(e -> e != null && CosmeticSlot.from(e.slot()).isPresent()).toList();
         Map<String,String> equipment = new LinkedHashMap<>();
         for (var item : safe) {
             if (item.slot() == null || item.cosmeticId() == null) throw new IllegalStateException("Equipamiento inválido");

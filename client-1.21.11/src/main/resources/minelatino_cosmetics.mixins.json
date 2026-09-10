@@ -7,7 +7,6 @@
     "PauseScreenMixin",
     "LivingEntityRendererAccessor",
     "PlayerRendererMixin",
-    "PlayerModelMixin",
     "MinecraftMixin"
   ],
   "injectors": {

@@ -18,13 +18,14 @@ class WardrobeControllerTest {
     }
     private static class Gateway implements WardrobeController.Gateway {
         List<ApiClient.EquippedEntry> equipment=List.of();
+        List<ApiClient.CosmeticItem> owned=List.of(HAT);
         String owner=UUID;
         int writes;
         Exception error;
         boolean ignoreWrite;
         public ApiClient.WardrobeResponse wardrobe(String token) throws Exception {
             if(error!=null) throw error;
-            return new ApiClient.WardrobeResponse(owner,List.of(HAT),equipment);
+            return new ApiClient.WardrobeResponse(owner,owned,equipment);
         }
         public ApiClient.EquipResponse equip(String token,String slot,String id) throws Exception {
             writes++; if(error!=null) throw error;
@@ -44,6 +45,19 @@ class WardrobeControllerTest {
         gateway.equipment=List.of(new ApiClient.EquippedEntry("HAT","hat")); load();
         assertEquals("hat",controller.snapshot().equipped().get("HAT"));
         assertEquals(gateway.equipment,published.getFirst());
+    }
+    @Test void legacySkinsAreIgnoredWithoutLosingNormalCosmetics() {
+        gateway.owned=List.of(HAT,new ApiClient.CosmeticItem("old-skin","Skin","SKIN","published",1));
+        gateway.equipment=List.of(new ApiClient.EquippedEntry("SKIN","old-skin"),new ApiClient.EquippedEntry("HAT","hat"));
+        load();
+        assertEquals(WardrobeController.Phase.READY,controller.snapshot().phase());
+        assertEquals(List.of(HAT),controller.snapshot().owned());
+        assertEquals(java.util.Map.of("HAT","hat"),controller.snapshot().equipped());
+        assertEquals(List.of(new ApiClient.EquippedEntry("HAT","hat")),published.getLast());
+        assertFalse(controller.equip("SKIN","old-skin"));
+        EquipmentCache cache=new EquipmentCache(null);
+        cache.setEquipped(UUID,List.of(new EquipmentCache.EquippedItem("SKIN","old-skin"),new EquipmentCache.EquippedItem("HAT","hat")));
+        assertEquals(List.of(new EquipmentCache.EquippedItem("HAT","hat")),cache.get(UUID));
     }
     @Test void doubleClickAndResizeCannotStartAnotherWrite() {
         load(); assertTrue(controller.equip("HAT","hat"));

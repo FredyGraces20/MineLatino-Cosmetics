@@ -2,7 +2,6 @@ package com.minelatino.cosmetics.client;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.AbstractClientPlayer;
-import com.mojang.blaze3d.platform.InputConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,10 +30,6 @@ public final class CosmeticsClient {
     private final EquipmentCache equipment;
     private final ResourceCache resources;
     private final WardrobeController wardrobe;
-    private final EmoteKeyConfig emoteKeys;
-    private boolean emoteKeyDown;
-    private long lastEmoteRefresh;
-    private volatile boolean emotesRefreshing;
     private long lastEquipmentRefresh = 0;
     private static final long EQUIPMENT_REFRESH_INTERVAL = 30_000; // 30 seconds
 
@@ -56,7 +51,6 @@ public final class CosmeticsClient {
         this.auth = new AuthManager(api, config.accountToken(), config.accountId(), config.accountExpiresAt());
         this.equipment = new EquipmentCache(api);
         this.resources = new ResourceCache(config.backendUrl(), cacheDir);
-        this.emoteKeys = EmoteKeyConfig.read(cacheDir.getParent().getParent());
         this.wardrobe = new WardrobeController(api, java.util.concurrent.ForkJoinPool.commonPool(),
                 task -> Minecraft.getInstance().execute(task), (uuid, entries) -> equipment.setEquipped(uuid,
                 entries.stream().map(e -> new EquipmentCache.EquippedItem(e.slot(), e.cosmeticId())).toList()));
@@ -69,7 +63,7 @@ public final class CosmeticsClient {
                     CosmeticsConfig config = CosmeticsConfig.read(Minecraft.getInstance().gameDirectory.toPath());
                     Path cacheDir = Minecraft.getInstance().gameDirectory.toPath().resolve("cache").resolve("minelatino-cosmetics");
                     instance = new CosmeticsClient(config, cacheDir);
-                    CosmeticsDiagnostics.event("START","build=alpha.25 minecraft=1.21.11 java="+System.getProperty("java.version"));
+                    CosmeticsDiagnostics.event("START","build=alpha.26 minecraft=1.21.11 java="+System.getProperty("java.version"));
                     LOG.info("Cosmetics backend: {}", config.backendUrl());
                 }
             }
@@ -92,16 +86,12 @@ public final class CosmeticsClient {
         CosmeticRenderer.ENTITY_UUID_MAP.clear();
         if (mc.level == null) return;
 
-        boolean wheelDown=InputConstants.isKeyDown(mc.getWindow(),emoteKeys.key());
-        if(wheelDown&&!emoteKeyDown&&mc.screen==null&&mc.player!=null)mc.setScreen(new EmoteWheelScreen(null,emoteKeys));
-        emoteKeyDown=wheelDown;
 
         // Always populate the entity ID → UUID map from the current player list
         for (AbstractClientPlayer player : mc.level.players()) {
             UUID uuid = player.getGameProfile().id();
             CosmeticRenderer.putEntityUuid(player.getId(), uuid);
         }
-        refreshEmotes(mc);
 
         // The local player can have a server-side offline UUID different from the
         // verified MineLatino account UUID. Bind only this entity to the verified
@@ -180,10 +170,7 @@ public final class CosmeticsClient {
     public EquipmentCache equipment() { return equipment; }
     public ResourceCache resources() { return resources; }
     public WardrobeController wardrobe() { return wardrobe; }
-    public EmoteKeyConfig emoteKeys(){return emoteKeys;}
-    public void playEmote(String clip,double duration){if(Minecraft.getInstance().player==null)return;AvatarEmoteState.play(Minecraft.getInstance().player.getId(),clip,duration);Session session=auth.session();if(session!=null)CompletableFuture.runAsync(()->{try{api.playEmote(session.token(),clip,Math.max(250,Math.min(60_000,Math.round(duration*1000))));}catch(Exception error){LOG.debug("Emote broadcast failed",error);}});}
 
-    private void refreshEmotes(Minecraft mc){long now=System.currentTimeMillis();if(emotesRefreshing||now-lastEmoteRefresh<750)return;lastEmoteRefresh=now;List<AbstractClientPlayer>players=List.copyOf(mc.level.players());List<String>uuids=players.stream().map(p->WardrobeController.normalize(p.getGameProfile().id().toString())).toList();List<String>names=players.stream().map(p->p.getGameProfile().name()).distinct().toList();Map<String,Integer>entities=new java.util.HashMap<>();for(var player:players){entities.put(WardrobeController.normalize(player.getGameProfile().id().toString()),player.getId());entities.put(player.getGameProfile().name().toLowerCase(java.util.Locale.ROOT),player.getId());}emotesRefreshing=true;CompletableFuture.runAsync(()->{try{for(var emote:api.emotes(uuids,names)){Integer entity=entities.get(WardrobeController.normalize(emote.uuid()));if(entity==null&&emote.name()!=null)entity=entities.get(emote.name().toLowerCase(java.util.Locale.ROOT));if(entity!=null)AvatarEmoteState.sync(entity,emote.clip(),emote.startedAt(),emote.expiresAt(),System.currentTimeMillis());}}catch(Exception error){LOG.debug("Emote refresh failed",error);}finally{emotesRefreshing=false;}});}
 
     /**
      * Get the server-side transform override for a cosmetic slot.
@@ -231,7 +218,7 @@ public final class CosmeticsClient {
         Session s=auth.session();
         String server=mc.player==null ? "none" : WardrobeController.normalize(mc.player.getUUID().toString());
         String owner=s==null ? "none" : WardrobeController.normalize(s.uuid());
-        String state="build=alpha.25 minecraft=1.21.11\naccountUuid="+mc.getUser().getProfileId()+
+        String state="build=alpha.26 minecraft=1.21.11\naccountUuid="+mc.getUser().getProfileId()+
                 "\nserverUuid="+server+"\nsessionUuid="+owner+"\nauth="+auth.state()+
                 "\nsessionValid="+auth.isConnected()+"\nwardrobe="+wardrobe.snapshot().phase()+
                 "\nowned="+wardrobe.snapshot().owned().size()+"\nconfirmed="+wardrobe.snapshot().equipped()+
@@ -264,7 +251,6 @@ public final class CosmeticsClient {
             instance.wardrobe.disconnect();
             instance.equipment.clear();
             instance.resources.clear();
-            AvatarEmoteState.clear();
             instance = null;
         }
     }
