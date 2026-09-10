@@ -146,24 +146,24 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
         stack.pushPose();try{
             // Bedrock geometry uses pixels, Y-up and forward -Z, anchored at the feet.
             stack.translate(0,1.5,0);stack.scale(1,-1,-1);
-            for(AvatarModel.Bone root:avatar.model().roots())renderAvatarBone(stack,consumer,light,avatar,root,clip,seconds,state.yRot,state.xRot);
+            for(AvatarModel.Bone root:avatar.model().roots())renderAvatarBone(stack,consumer,light,avatar,root,clip,seconds,state.ageInTicks/20.0,state.yRot,state.xRot);
         }finally{stack.popPose();}
     }
 
     private static String movementClip(AvatarAnimation animations,PlayerRenderState state){
-        for(String candidate:state.deathTime>0?List.of("death"):state.isUsingItem?List.of("use_mainhand","use_offhand"):state.attackTime>0?List.of("swing_hand"):state.isFallFlying?List.of("elytra_fly","fly"):state.isVisuallySwimming?List.of("swim"):state.isPassenger?List.of("ride","sit"):state.isCrouching?List.of(state.speedValue>.02f?"sneaking":"sneak"):state.speedValue>.75f?List.of("run","walk"):state.speedValue>.02f?List.of("walk","run"):List.of("idle"))
+        for(String candidate:state.deathTime>0?List.of("death"):state.isUsingItem?List.of("use_mainhand","use_offhand"):state.attackTime>0?List.of("swing_hand"):state.isFallFlying?List.of("elytra_fly","fly"):state.isVisuallySwimming?List.of("swim"):state.isPassenger?List.of("ride","sit"):state.isCrouching?List.of(state.walkAnimationSpeed>.02f?"sneak":"sneaking"):state.walkAnimationSpeed>.75f?List.of("run","walk"):state.walkAnimationSpeed>.02f?List.of("walk","run"):List.of("idle"))
             for(String name:animations.names())if(name.equals(candidate)||name.endsWith("."+candidate))return name;
-        return animations.names().isEmpty()?null:animations.names().getFirst();
+        return null;
     }
 
-    private static void renderAvatarBone(PoseStack stack,VertexConsumer consumer,int light,AvatarPackage avatar,AvatarModel.Bone bone,String clip,double seconds,float headYaw,float headPitch){
-        AvatarAnimation.Pose animation=clip==null?new AvatarAnimation.Pose(new float[3],new float[3],new float[]{1,1,1}):avatar.animations().sample(clip,bone.name(),seconds,headYaw,headPitch);
+    private static void renderAvatarBone(PoseStack stack,VertexConsumer consumer,int light,AvatarPackage avatar,AvatarModel.Bone bone,String clip,double seconds,double ambientSeconds,float headYaw,float headPitch){
+        AvatarAnimation.Pose animation=avatar.animations().sampleLayered(clip,bone.name(),seconds,ambientSeconds,headYaw,headPitch);
         float[]p=bone.pivot(),r=bone.rotation(),ar=animation.rotation();stack.pushPose();try{
             stack.translate((p[0]+animation.position()[0])/16.0,(p[1]+animation.position()[1])/16.0,(p[2]+animation.position()[2])/16.0);
             stack.mulPose(new Quaternionf().rotationZYX((float)Math.toRadians(-(r[2]+ar[2])),(float)Math.toRadians(-(r[1]+ar[1])),(float)Math.toRadians(r[0]+ar[0])));
             stack.scale(animation.scale()[0],animation.scale()[1],animation.scale()[2]);stack.translate(-p[0]/16.0,-p[1]/16.0,-p[2]/16.0);
             for(AvatarModel.Cube cube:bone.cubes())renderAvatarCube(stack,consumer,light,avatar.model(),cube);
-            for(AvatarModel.Bone child:avatar.model().children(bone.name()))renderAvatarBone(stack,consumer,light,avatar,child,clip,seconds,headYaw,headPitch);
+            for(AvatarModel.Bone child:avatar.model().children(bone.name()))renderAvatarBone(stack,consumer,light,avatar,child,clip,seconds,ambientSeconds,headYaw,headPitch);
         }finally{stack.popPose();}
     }
 

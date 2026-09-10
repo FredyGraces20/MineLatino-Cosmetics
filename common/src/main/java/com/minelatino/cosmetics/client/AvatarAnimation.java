@@ -15,13 +15,47 @@ public final class AvatarAnimation {
     public record Pose(float[] position, float[] rotation, float[] scale) {}
     private static final Pose IDENTITY = new Pose(new float[3],new float[3],new float[]{1,1,1});
     private final Map<String,Clip> clips;
-    private AvatarAnimation(Map<String,Clip> clips){this.clips=Map.copyOf(clips);}
+    private final List<String> preParallel;
+    private final List<String> parallel;
+    private AvatarAnimation(Map<String,Clip> clips){
+        this.clips=Map.copyOf(clips);
+        this.preParallel=layers(clips,"pre_parallel");
+        this.parallel=layers(clips,"parallel");
+    }
     public static AvatarAnimation none(){return new AvatarAnimation(Map.of());}
     public List<String> names(){return List.copyOf(clips.keySet());}
     public boolean has(String name){return clips.containsKey(name);}
     public double length(String name){Clip c=clips.get(name);return c==null?0:c.length;}
     public Pose sample(String clipName,String bone,double seconds){return sample(clipName,bone,seconds,0,0);}
     public Pose sample(String clipName,String bone,double seconds,float headYaw,float headPitch){Clip clip=clips.get(clipName);if(clip==null)return IDENTITY;BoneTracks tracks=clip.bones.get(bone);if(tracks==null)return IDENTITY;double time=clip.length<=0?0:clip.loop?seconds%clip.length:Math.min(seconds,clip.length);return new Pose(tracks.position.sample(time,headYaw,headPitch),tracks.rotation.sample(time,headYaw,headPitch),tracks.scale.sample(time,headYaw,headPitch));}
+
+    /**
+     * Evaluates the legacy YSM/Bedrock layer order without ever mixing unrelated
+     * movement clips: pre_parallel0..7, one primary clip, parallel0..7. Primary
+     * channels override pre-parallel channels. High-priority parallel channels
+     * override position/scale and add rotation, matching YSM's documented blend.
+     */
+    public Pose sampleLayered(String primary,String bone,double primarySeconds,double ambientSeconds,float headYaw,float headPitch){
+        float[] position=new float[3],rotation=new float[3],scale=new float[]{1,1,1};
+        for(String name:preParallel)apply(name,bone,ambientSeconds,headYaw,headPitch,position,rotation,scale,false);
+        apply(primary,bone,primarySeconds,headYaw,headPitch,position,rotation,scale,false);
+        for(String name:parallel)apply(name,bone,ambientSeconds,headYaw,headPitch,position,rotation,scale,true);
+        return new Pose(position,rotation,scale);
+    }
+
+    private void apply(String clipName,String bone,double seconds,float yaw,float pitch,float[] position,float[] rotation,float[] scale,boolean additiveRotation){
+        Clip clip=clips.get(clipName);if(clip==null)return;BoneTracks tracks=clip.bones.get(bone);if(tracks==null)return;
+        double time=clip.length<=0?0:clip.loop?seconds%clip.length:Math.min(seconds,clip.length);
+        if(tracks.position.present)copy(position,tracks.position.sample(time,yaw,pitch),false);
+        if(tracks.rotation.present)copy(rotation,tracks.rotation.sample(time,yaw,pitch),additiveRotation);
+        if(tracks.scale.present)copy(scale,tracks.scale.sample(time,yaw,pitch),false);
+    }
+    private static void copy(float[] target,float[] source,boolean add){for(int i=0;i<3;i++)target[i]=add?target[i]+source[i]:source[i];}
+    private static List<String> layers(Map<String,Clip> clips,String prefix){
+        return clips.keySet().stream().filter(name->{String simple=simple(name);return simple.matches(prefix+"[0-7]");})
+            .sorted(Comparator.comparingInt(name->simple(name).charAt(prefix.length())-'0')).toList();
+    }
+    private static String simple(String name){int dot=name.lastIndexOf('.');return (dot<0?name:name.substring(dot+1)).toLowerCase();}
 
     public static AvatarAnimation parse(List<String> sources){
         Map<String,Clip> result=new LinkedHashMap<>();
@@ -35,12 +69,12 @@ public final class AvatarAnimation {
             }
         }return new AvatarAnimation(result);
     }
-    private static Track track(JsonObject bone,String channel,String[] fallback){if(!bone.has(channel))return new Track(List.of(new Key(0,fallback)));JsonElement raw=bone.get(channel);if(raw.isJsonArray()||raw.isJsonPrimitive())return new Track(List.of(new Key(0,vector(raw,fallback))));JsonObject keyed=raw.getAsJsonObject();List<Key>keys=new ArrayList<>();for(var e:keyed.entrySet()){double time;try{time=Double.parseDouble(e.getKey());}catch(NumberFormatException ex){continue;}JsonElement value=e.getValue();if(value.isJsonObject()){JsonObject obj=value.getAsJsonObject();value=obj.has("post")?obj.get("post"):obj.get("pre");}if(value!=null)keys.add(new Key(time,vector(value,fallback)));}if(keys.isEmpty())keys.add(new Key(0,fallback));keys.sort(Comparator.comparingDouble(Key::time));if(keys.size()>4096)throw new IllegalArgumentException("Too many keyframes");return new Track(List.copyOf(keys));}
+    private static Track track(JsonObject bone,String channel,String[] fallback){if(!bone.has(channel))return new Track(List.of(new Key(0,fallback)),false);JsonElement raw=bone.get(channel);if(raw.isJsonArray()||raw.isJsonPrimitive())return new Track(List.of(new Key(0,vector(raw,fallback))),true);JsonObject keyed=raw.getAsJsonObject();List<Key>keys=new ArrayList<>();for(var e:keyed.entrySet()){double time;try{time=Double.parseDouble(e.getKey());}catch(NumberFormatException ex){continue;}JsonElement value=e.getValue();if(value.isJsonObject()){JsonObject obj=value.getAsJsonObject();value=obj.has("post")?obj.get("post"):obj.get("pre");}if(value!=null)keys.add(new Key(time,vector(value,fallback)));}if(keys.isEmpty())keys.add(new Key(0,fallback));keys.sort(Comparator.comparingDouble(Key::time));if(keys.size()>4096)throw new IllegalArgumentException("Too many keyframes");return new Track(List.copyOf(keys),true);}
     private static String[] vector(JsonElement element,String[] fallback){if(element==null||element.isJsonNull())return fallback.clone();if(element.isJsonPrimitive()){String scalar=element.getAsString();return new String[]{scalar,scalar,scalar};}if(!element.isJsonArray())return fallback.clone();JsonArray a=element.getAsJsonArray();if(a.size()!=3)throw new IllegalArgumentException("Animation vector needs three values");String[]r=new String[3];for(int i=0;i<3;i++){JsonElement v=a.get(i);if(!v.isJsonPrimitive())throw new IllegalArgumentException("Invalid animation expression");r[i]=v.getAsString();if(r[i].length()>512)throw new IllegalArgumentException("Molang expression too long");}return r;}
     private record BoneTracks(Track position,Track rotation,Track scale){}
     private record Clip(double length,boolean loop,Map<String,BoneTracks>bones){}
     private record Key(double time,String[]value){}
-    private record Track(List<Key>keys){double end(){return keys.getLast().time;}float[]sample(double time,float yaw,float pitch){if(keys.size()==1)return eval(keys.getFirst().value,time,yaw,pitch);Key left=keys.getFirst(),right=keys.getLast();for(int i=1;i<keys.size();i++)if(time<=keys.get(i).time){left=keys.get(i-1);right=keys.get(i);break;}float[]a=eval(left.value,time,yaw,pitch),b=eval(right.value,time,yaw,pitch);float t=right.time==left.time?0:(float)((time-left.time)/(right.time-left.time));t=Math.max(0,Math.min(1,t));return new float[]{a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t};}}
+    private record Track(List<Key>keys,boolean present){double end(){return keys.getLast().time;}float[]sample(double time,float yaw,float pitch){if(keys.size()==1)return eval(keys.getFirst().value,time,yaw,pitch);Key left=keys.getFirst(),right=keys.getLast();for(int i=1;i<keys.size();i++)if(time<=keys.get(i).time){left=keys.get(i-1);right=keys.get(i);break;}float[]a=eval(left.value,time,yaw,pitch),b=eval(right.value,time,yaw,pitch);float t=right.time==left.time?0:(float)((time-left.time)/(right.time-left.time));t=Math.max(0,Math.min(1,t));return new float[]{a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t};}}
     private static float[] eval(String[]v,double time,float yaw,float pitch){float[]r=new float[3];for(int i=0;i<3;i++){double n=new Molang(v[i],time,yaw,pitch).parse();r[i]=Double.isFinite(n)?(float)Math.max(-65536,Math.min(65536,n)):0;}return r;}
 
     /** No reflection/eval: unknown variables are zero; trigonometric functions use degrees like Molang. */

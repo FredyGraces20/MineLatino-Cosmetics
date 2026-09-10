@@ -15,5 +15,20 @@ class AvatarPackageTest {
       """;String animation="""
       {"animations":{"wave":{"loop":true,"animation_length":2,"bones":{"root":{"rotation":[0,"20*math.sin(query.anim_time*90)",0]}}}}}
       """;AvatarPackage parsed=AvatarPackage.parse(zip(model,animation));assertEquals(1,parsed.model().roots().size());assertEquals("wave",parsed.emotes().getFirst());assertEquals(20,parsed.animations().sample("wave","root",1).rotation()[1],.01);}
+    @Test void layersPrePrimaryAndParallelAnimationsWithYsmPriority()throws Exception{String animation="""
+      {"animations":{
+        "pre_parallel0":{"bones":{"fx":{"position":[1,0,0],"rotation":[10,0,0],"scale":0}}},
+        "idle":{"bones":{"fx":{"rotation":[20,0,0]}}},
+        "attack":{"bones":{"fx":{"rotation":[30,0,0],"scale":1}}},
+        "parallel0":{"bones":{"fx":{"position":[3,0,0],"rotation":[5,0,0]}}}
+      }}
+      """;AvatarAnimation animations=AvatarAnimation.parse(java.util.List.of(animation));
+      AvatarAnimation.Pose idle=animations.sampleLayered("idle","fx",0,0,0,0);
+      assertArrayEquals(new float[]{3,0,0},idle.position(),.001f);
+      assertArrayEquals(new float[]{25,0,0},idle.rotation(),.001f);
+      assertArrayEquals(new float[]{0,0,0},idle.scale(),.001f);
+      AvatarAnimation.Pose attack=animations.sampleLayered("attack","fx",0,0,0,0);
+      assertArrayEquals(new float[]{1,1,1},attack.scale(),.001f);
+    }
     @Test void rejectsTraversal()throws Exception{ByteArrayOutputStream bytes=new ByteArrayOutputStream();try(ZipOutputStream zip=new ZipOutputStream(bytes)){put(zip,"../main.json","{}".getBytes(StandardCharsets.UTF_8));}assertThrows(java.io.IOException.class,()->AvatarPackage.parse(bytes.toByteArray()));}
 }
