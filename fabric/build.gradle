@@ -1,15 +1,5 @@
 plugins { id 'fabric-loom' version '1.9.2' }
 
-loom {
-    mixin {
-        // These sources compile against Mojang names but Fabric runs the JAR
-        // in the intermediary namespace. Generate and embed the refmap so
-        // targets such as Minecraft.tick resolve in production as method_1574.
-        useLegacyMixinAp = true
-        defaultRefmapName = 'minelatino_cosmetics.refmap.json'
-    }
-}
-
 def mcVersion = project.findProperty('mcVersion') ?: '1.21.4'
 def props = new Properties()
 file('../versions.properties').withInputStream { props.load(it) }
