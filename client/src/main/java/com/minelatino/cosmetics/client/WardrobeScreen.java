@@ -56,7 +56,7 @@ public final class WardrobeScreen extends Screen {
         for(int i=0;i<slots.size();i++) {
             CosmeticSlot slot=slots.get(i);
             int tabW=wide ? 88 : (width-16)/slots.size();
-            int tabX=wide ? 8 : 8+i*tabW, tabY=wide ? top+22+i*Math.min(25,Math.max(20,(bottom-top-24)/6)) : 40;
+            int tabX=wide ? 8 : 8+i*tabW, tabY=wide ? top+22+i*Math.min(25,Math.max(20,(bottom-top-24)/slots.size())) : 40;
             addRenderableWidget(new WardrobeButton(tabX,tabY,tabW-2,20,slot==null ? "Todos" : slot.label(),
                     ()->{ filter=slot; page=0; rebuildCards(); },()->filter==slot));
         }

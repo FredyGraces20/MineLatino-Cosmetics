@@ -64,22 +64,22 @@ test('v4 slot migration preserves ownership and equipment and is idempotent', t 
   try {
     assert.equal(store.cosmetic('pet').slot, 'PET');
     assert.equal(store.appearance(OWNER)[0].cosmeticId, 'cape');
-    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 8);
     assert.equal(store.db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
   } finally { store.close(); }
 });
 
-test('all five cosmetic types persist independent transforms and reject mismatched types', t => {
+test('all six cosmetic types persist independent transforms and reject mismatched types', t => {
   const { store } = fixture(t);
   for (const [id, catalogSlot, transformSlot] of [
     ['hat', 'HAT', 'hat'], ['cape', 'CAPE', 'cape'], ['wings', 'WINGS', 'wings'],
-    ['pack', 'BACKPACK', 'backpack'], ['pet', 'PET', 'pet'],
+    ['pack', 'BACKPACK', 'backpack'], ['pet', 'PET', 'pet'], ['skin', 'SKIN', 'skin'],
   ]) {
     store.saveCosmetic(id, { ...catalog, name: id, slot: catalogSlot }, 'test');
     const transform = { translation: [1, 2, 3], rotation: [4, 5, 6], scale: [1.1, 1.2, 1.3] };
     assert.deepEqual(store.saveTransform(id, transformSlot, transform, 'test')[transformSlot].translation, [1, 2, 3]);
   }
-  assert.deepEqual(Object.keys(store.getAllTransforms()).sort(), ['cape', 'hat', 'pack', 'pet', 'wings']);
+  assert.deepEqual(Object.keys(store.getAllTransforms()).sort(), ['cape', 'hat', 'pack', 'pet', 'skin', 'wings']);
   assert.throws(() => store.saveTransform('cape', 'backpack', { translation: [0, 0, 0] }, 'test'), { status: 409 });
 });
 
@@ -104,7 +104,7 @@ test('legacy head/backpack transforms migrate to each cosmetic catalog type', t 
   try {
     assert.deepEqual(store.getTransforms('pet').pet.translation, [1, 2, 3]);
     assert.deepEqual(store.getTransforms('cape').cape.scale, [2, 2, 2]);
-    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 8);
   } finally { store.close(); }
 });
 function fixture(t, options = {}) {
@@ -163,6 +163,28 @@ test('game token equips and publishes account cosmetics for offline identities',
   const appearance = await request(`/v1/cosmetics/appearance?uuids=${OTHER}&names=OfflineUser`);
   assert.equal(appearance.data.identityMode, 'minelatino-account');
   assert.deepEqual(appearance.data.players[0].equipped, [{ slot: 'CAPE', cosmeticId: 'cape' }]);
+});
+
+test('equipped animated skins broadcast emotes through the MineLatino account identity', async t => {
+  const now = 1_800_000_000_000;
+  const { store, request } = fixture(t, { now: () => now });
+  store.saveCosmetic('avatar', { ...catalog, name: 'Avatar', slot: 'SKIN' }, 'admin');
+  store.saveResource('avatar', '', '', 0, 'application/octet-stream');
+  store.saveAvatarPackage('avatar', 'avatar.zip', 'a'.repeat(64), 123);
+  const registered = await request('/v1/account/register', { method: 'POST', data: {
+    email: 'emote@example.com', password: 'correct-horse-emote', nick: 'EmoteUser',
+  }});
+  const accountId = registered.data.account.accountId;
+  store.accountEntitlement({ accountId, cosmeticId: 'avatar' }, true, 'test');
+  assert.equal((await request('/v1/account/equipment', { method: 'PUT', token: registered.data.token,
+    data: { slot: 'SKIN', cosmeticId: 'avatar' } })).status, 200);
+  assert.equal((await request('/v1/account/presence', { method: 'POST', token: registered.data.token,
+    data: { uuid: OTHER, name: 'EmoteUser' } })).status, 200);
+  const played = await request('/v1/account/emote', { method: 'POST', token: registered.data.token,
+    data: { clip: 'extra0', durationMs: 2200 } });
+  assert.equal(played.status, 200); assert.equal(played.data.emote.expiresAt, now + 2200);
+  const visible = await request(`/v1/cosmetics/emotes?uuids=${OTHER}&names=EmoteUser`);
+  assert.deepEqual(visible.data.items, [{ uuid: OTHER, name: 'EmoteUser', clip: 'extra0', startedAt: now, expiresAt: now + 2200 }]);
 });
 
 test('player accounts can update themselves and administrators can suspend or delete them', async t => {
@@ -679,6 +701,17 @@ test('catalog includes resource info for admin and public views', async t => {
   assert.equal(adminCatalog.data.items[0].resource.content_type, 'image/png');
   const publicCatalog = await request('/v1/cosmetics/catalog');
   assert.equal(publicCatalog.data.items[0].hasResource, true);
+});
+
+test('storefront exposes animated Skin package availability to the launcher', async t => {
+  const { store, request } = fixtureWithResources(t);
+  store.saveCosmetic('avatar', { ...catalog, name: 'Avatar', slot: 'SKIN' }, 'admin');
+  store.saveResource('avatar', '', '', 0, 'application/octet-stream');
+  store.saveAvatarPackage('avatar', 'avatar.zip', 'a'.repeat(64), 123);
+  const storefront = await request('/v1/storefront/catalog');
+  assert.equal(storefront.status, 200);
+  assert.equal(storefront.data.items[0].slot, 'SKIN');
+  assert.equal(storefront.data.items[0].hasAvatarPackage, true);
 });
 
 test('pet animation can be uploaded, selected and distributed to the mod', async t => {

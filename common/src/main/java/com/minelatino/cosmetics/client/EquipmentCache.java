@@ -89,7 +89,7 @@ public final class EquipmentCache {
                 }
                 List<EquippedItem> items = player.equipped() == null ? List.of()
                     : player.equipped().stream().map(e -> {
-                        if (e == null || e.slot() == null || !Set.of("CAPE", "HAT", "WINGS", "BACKPACK", "PET").contains(e.slot())
+                        if (e == null || e.slot() == null || !Set.of("CAPE", "HAT", "WINGS", "BACKPACK", "PET", "SKIN").contains(e.slot())
                                 || e.cosmeticId() == null || !e.cosmeticId().matches("[a-z0-9_-]{1,64}")) {
                             throw new IllegalArgumentException("Appearance response contains invalid equipment");
                         }

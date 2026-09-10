@@ -1,8 +1,7 @@
 # API local de cosméticos
 
-Backend funcional de desarrollo, separado del servicio público del launcher.
-No contiene todavía un panel web, subida de modelos, pagos ni integración con el mod.
-Los cosméticos son registros de catálogo: publicar un registro no genera un modelo.
+Backend del panel, catálogo, recursos, cuentas, entregas y sincronización del mod.
+Publicar metadatos no genera un modelo: los recursos se cargan explícitamente.
 
 ## Iniciar
 
@@ -34,6 +33,8 @@ administrativos, permisos de archivos, copias verificadas y operación multiinst
 |---|---|
 | GET `/v1/cosmetics/catalog?offset=0` | Metadatos publicados, hasta 50 |
 | GET `/v1/cosmetics/appearance?uuids=<uuid>,<uuid>` | Equipamiento público, máximo 50 UUID |
+| GET `/v1/cosmetics/emotes?uuids=<uuid>&names=<nick>` | Emotes activos de jugadores cercanos |
+| POST `/v1/account/emote` | Emitir un emote autenticado de la Skin equipada |
 | GET `/v1/client-config/pause-menu` | Última configuración válida y revisión |
 | GET `/v1/admin/cosmetics/catalog?offset=0` | Catálogo completo paginado |
 | PUT `/v1/admin/cosmetics/catalog/<id>` | Crear o actualizar, con `expectedRevision` |
@@ -48,6 +49,7 @@ administrativos, permisos de archivos, copias verificadas y operación multiinst
 | POST `/v1/account/password/reset` | Consumir el código y definir una contraseña nueva |
 | PUT `/v1/account/password` | Cambiarla con sesión y contraseña actual |
 | POST `/v1/admin/player-accounts/<id>/password-reset` | Generar un código de soporte de un solo uso |
+| PUT `/v1/admin/cosmetics/catalog/<id>/avatar-package` | Validar y subir un personaje ZIP animado |
 
 ## Recuperación de cuentas
 
@@ -71,7 +73,7 @@ Creación de metadatos (`PUT .../catalog/capa-fundador`):
 {"name":"Capa fundador","slot":"CAPE","status":"draft","expectedRevision":0}
 ```
 
-Slots: `CAPE`, `HAT`, `WINGS`. Estados: `draft`, `published`, `retired`.
+Slots: `CAPE`, `HAT`, `WINGS`, `BACKPACK`, `PET`, `SKIN`. Estados: `draft`, `published`, `retired`.
 Una actualización usa la revisión recibida; un conflicto devuelve 409.
 El slot es inmutable para evitar que un artículo vendido cambie de categoría.
 Cambiar nombre o estado no elimina las asignaciones existentes. Retirarlo sí

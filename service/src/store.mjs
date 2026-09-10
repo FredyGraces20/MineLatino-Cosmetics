@@ -16,8 +16,8 @@ export function cosmeticId(value) {
   requireThat(typeof value === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value), 'ID de cosmético inválido');
   return value;
 }
-export const SLOTS = ['CAPE', 'HAT', 'WINGS', 'BACKPACK', 'PET'];
-export const TRANSFORM_SLOTS = ['cape', 'hat', 'wings', 'backpack', 'pet'];
+export const SLOTS = ['CAPE', 'HAT', 'WINGS', 'BACKPACK', 'PET', 'SKIN'];
+export const TRANSFORM_SLOTS = ['cape', 'hat', 'wings', 'backpack', 'pet', 'skin'];
 
 /** Check if hostname matches an allowed domain or any of its subdomains. */
 function isAllowedHost(hostname, allowedDomains) {
@@ -60,7 +60,7 @@ export class Store {
   constructor(path = ':memory:') {
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS cosmetics(id TEXT PRIMARY KEY, name TEXT NOT NULL, slot TEXT NOT NULL CHECK(slot IN ('CAPE','HAT','WINGS','BACKPACK','PET')), status TEXT NOT NULL CHECK(status IN ('draft','published','retired')), revision INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS cosmetics(id TEXT PRIMARY KEY, name TEXT NOT NULL, slot TEXT NOT NULL CHECK(slot IN ('CAPE','HAT','WINGS','BACKPACK','PET','SKIN')), status TEXT NOT NULL CHECK(status IN ('draft','published','retired')), revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS players(uuid TEXT PRIMARY KEY, name TEXT NOT NULL, verified_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS entitlements(uuid TEXT NOT NULL, cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id), active INTEGER NOT NULL CHECK(active IN (0,1)), PRIMARY KEY(uuid,cosmetic_id));
       CREATE TABLE IF NOT EXISTS operations(reference TEXT PRIMARY KEY, payload TEXT NOT NULL);
@@ -70,9 +70,9 @@ export class Store {
       CREATE TABLE IF NOT EXISTS cosmetic_products(cosmetic_id TEXT PRIMARY KEY REFERENCES cosmetics(id), description TEXT NOT NULL, amount_minor INTEGER, currency TEXT NOT NULL DEFAULT 'USD');
       CREATE INDEX IF NOT EXISTS entitlement_owners ON entitlements(cosmetic_id,active,uuid);
       CREATE TABLE IF NOT EXISTS admins(username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, password_salt TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'admin', created_at INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS resources(cosmetic_id TEXT PRIMARY KEY REFERENCES cosmetics(id), file_path TEXT NOT NULL, sha256 TEXT NOT NULL, file_size INTEGER NOT NULL, content_type TEXT NOT NULL, uploaded_at INTEGER NOT NULL, model_path TEXT, model_sha256 TEXT, model_size INTEGER);
+      CREATE TABLE IF NOT EXISTS resources(cosmetic_id TEXT PRIMARY KEY REFERENCES cosmetics(id), file_path TEXT NOT NULL, sha256 TEXT NOT NULL, file_size INTEGER NOT NULL, content_type TEXT NOT NULL, uploaded_at INTEGER NOT NULL, model_path TEXT, model_sha256 TEXT, model_size INTEGER, avatar_path TEXT, avatar_sha256 TEXT, avatar_size INTEGER);
       CREATE TABLE IF NOT EXISTS resource_files(cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id), name TEXT NOT NULL, file_path TEXT NOT NULL, sha256 TEXT NOT NULL, file_size INTEGER NOT NULL, mcmeta_path TEXT, mcmeta_size INTEGER, uploaded_at INTEGER NOT NULL, PRIMARY KEY(cosmetic_id, name));
-      CREATE TABLE IF NOT EXISTS cosmetic_transforms(cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id), slot TEXT NOT NULL CHECK(slot IN ('cape','hat','wings','backpack','pet')), translation_x REAL DEFAULT 0, translation_y REAL DEFAULT 0, translation_z REAL DEFAULT 0, rotation_x REAL DEFAULT 0, rotation_y REAL DEFAULT 0, rotation_z REAL DEFAULT 0, scale_x REAL DEFAULT 1, scale_y REAL DEFAULT 1, scale_z REAL DEFAULT 1, updated_at INTEGER, PRIMARY KEY(cosmetic_id, slot));
+      CREATE TABLE IF NOT EXISTS cosmetic_transforms(cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id), slot TEXT NOT NULL CHECK(slot IN ('cape','hat','wings','backpack','pet','skin')), translation_x REAL DEFAULT 0, translation_y REAL DEFAULT 0, translation_z REAL DEFAULT 0, rotation_x REAL DEFAULT 0, rotation_y REAL DEFAULT 0, rotation_z REAL DEFAULT 0, scale_x REAL DEFAULT 1, scale_y REAL DEFAULT 1, scale_z REAL DEFAULT 1, updated_at INTEGER, PRIMARY KEY(cosmetic_id, slot));
       CREATE TABLE IF NOT EXISTS pet_animations(cosmetic_id TEXT PRIMARY KEY REFERENCES cosmetics(id), animation_name TEXT NOT NULL, file_path TEXT, sha256 TEXT, file_size INTEGER, updated_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS player_accounts(account_id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE COLLATE NOCASE, nick TEXT NOT NULL, password_hash TEXT NOT NULL, password_salt TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','suspended','deleted')), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER);
       CREATE TABLE IF NOT EXISTS account_sessions(token_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES player_accounts(account_id) ON DELETE CASCADE, scope TEXT NOT NULL CHECK(scope IN ('account','game')), expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL);
@@ -80,6 +80,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS account_entitlements(account_id TEXT NOT NULL REFERENCES player_accounts(account_id) ON DELETE CASCADE, cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id), active INTEGER NOT NULL CHECK(active IN (0,1)), PRIMARY KEY(account_id,cosmetic_id));
       CREATE TABLE IF NOT EXISTS account_equipment(account_id TEXT NOT NULL REFERENCES player_accounts(account_id) ON DELETE CASCADE, slot TEXT NOT NULL, cosmetic_id TEXT NOT NULL, PRIMARY KEY(account_id,slot), FOREIGN KEY(account_id,cosmetic_id) REFERENCES account_entitlements(account_id,cosmetic_id));
       CREATE TABLE IF NOT EXISTS account_presence(account_id TEXT PRIMARY KEY REFERENCES player_accounts(account_id) ON DELETE CASCADE, profile_uuid TEXT NOT NULL, name TEXT NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS account_emotes(account_id TEXT PRIMARY KEY REFERENCES player_accounts(account_id) ON DELETE CASCADE, clip TEXT NOT NULL, started_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS player_accounts_nick ON player_accounts(nick COLLATE NOCASE);
       CREATE INDEX IF NOT EXISTS password_reset_account ON password_reset_tokens(account_id,expires_at);
       CREATE INDEX IF NOT EXISTS account_presence_identity ON account_presence(name COLLATE NOCASE,profile_uuid,updated_at);
@@ -96,13 +97,16 @@ export class Store {
     if (!columns.includes('model_size')) {
       this.db.prepare('ALTER TABLE resources ADD COLUMN model_size INTEGER').run();
     }
+    if (!columns.includes('avatar_path')) this.db.prepare('ALTER TABLE resources ADD COLUMN avatar_path TEXT').run();
+    if (!columns.includes('avatar_sha256')) this.db.prepare('ALTER TABLE resources ADD COLUMN avatar_sha256 TEXT').run();
+    if (!columns.includes('avatar_size')) this.db.prepare('ALTER TABLE resources ADD COLUMN avatar_size INTEGER').run();
     this.migrateCosmeticSlots();
     this.migrateCosmeticTransforms();
     this.repairInvalidPublishedCosmetics();
   }
   repairInvalidPublishedCosmetics() {
     const invalid = this.db.prepare(`SELECT id FROM cosmetics c WHERE c.status='published'
-      AND NOT EXISTS(SELECT 1 FROM resources r WHERE r.cosmetic_id=c.id AND r.file_path<>'')
+      AND NOT EXISTS(SELECT 1 FROM resources r WHERE r.cosmetic_id=c.id AND (r.file_path<>'' OR r.avatar_path IS NOT NULL))
       AND NOT EXISTS(SELECT 1 FROM resource_files f WHERE f.cosmetic_id=c.id)`).all();
     if (invalid.length === 0) return;
     this.transaction(() => {
@@ -115,8 +119,8 @@ export class Store {
   }
   migrateCosmeticSlots() {
     const schema = this.db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='cosmetics'").get().sql;
-    if (schema.includes("'BACKPACK'") && schema.includes("'PET'")) {
-      if (this.db.prepare('PRAGMA user_version').get().user_version < 5) this.db.exec('PRAGMA user_version=5');
+    if (SLOTS.every(slot => schema.includes(`'${slot}'`))) {
+      if (this.db.prepare('PRAGMA user_version').get().user_version < 7) this.db.exec('PRAGMA user_version=7');
       return;
     }
     // SQLite cannot ALTER a CHECK constraint. Rebuild only this table in a transaction,
@@ -124,21 +128,21 @@ export class Store {
     this.db.exec('PRAGMA foreign_keys=OFF');
     try {
       this.transaction(() => {
-        this.db.exec(`CREATE TABLE cosmetics_slots_v5(id TEXT PRIMARY KEY, name TEXT NOT NULL,
-          slot TEXT NOT NULL CHECK(slot IN ('CAPE','HAT','WINGS','BACKPACK','PET')),
+        this.db.exec(`CREATE TABLE cosmetics_slots_v7(id TEXT PRIMARY KEY, name TEXT NOT NULL,
+          slot TEXT NOT NULL CHECK(slot IN ('CAPE','HAT','WINGS','BACKPACK','PET','SKIN')),
           status TEXT NOT NULL CHECK(status IN ('draft','published','retired')), revision INTEGER NOT NULL);
-          INSERT INTO cosmetics_slots_v5 SELECT id,name,slot,status,revision FROM cosmetics;
+          INSERT INTO cosmetics_slots_v7 SELECT id,name,slot,status,revision FROM cosmetics;
           DROP TABLE cosmetics;
-          ALTER TABLE cosmetics_slots_v5 RENAME TO cosmetics;`);
+          ALTER TABLE cosmetics_slots_v7 RENAME TO cosmetics;`);
         requireThat(this.db.prepare('PRAGMA foreign_key_check').all().length === 0, 'Migración de categorías: referencias inválidas', 500);
-        this.db.exec('PRAGMA user_version=5');
+        this.db.exec('PRAGMA user_version=7');
       });
     } finally { this.db.exec('PRAGMA foreign_keys=ON'); }
   }
   migrateCosmeticTransforms() {
     const schema = this.db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='cosmetic_transforms'").get().sql;
     if (TRANSFORM_SLOTS.every(slot => schema.includes(`'${slot}'`))) {
-      if (this.db.prepare('PRAGMA user_version').get().user_version < 6) this.db.exec('PRAGMA user_version=6');
+      if (this.db.prepare('PRAGMA user_version').get().user_version < 8) this.db.exec('PRAGMA user_version=8');
       return;
     }
     // The original editor stored every body cosmetic as "backpack" and pets/hats as
@@ -147,22 +151,22 @@ export class Store {
     this.db.exec('PRAGMA foreign_keys=OFF');
     try {
       this.transaction(() => {
-        this.db.exec(`CREATE TABLE cosmetic_transforms_v6(cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id),
-          slot TEXT NOT NULL CHECK(slot IN ('cape','hat','wings','backpack','pet')),
+        this.db.exec(`CREATE TABLE cosmetic_transforms_v8(cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id),
+          slot TEXT NOT NULL CHECK(slot IN ('cape','hat','wings','backpack','pet','skin')),
           translation_x REAL DEFAULT 0, translation_y REAL DEFAULT 0, translation_z REAL DEFAULT 0,
           rotation_x REAL DEFAULT 0, rotation_y REAL DEFAULT 0, rotation_z REAL DEFAULT 0,
           scale_x REAL DEFAULT 1, scale_y REAL DEFAULT 1, scale_z REAL DEFAULT 1,
           updated_at INTEGER, PRIMARY KEY(cosmetic_id, slot));
-          INSERT INTO cosmetic_transforms_v6
+          INSERT INTO cosmetic_transforms_v8
           SELECT t.cosmetic_id, lower(c.slot), t.translation_x, t.translation_y, t.translation_z,
             t.rotation_x, t.rotation_y, t.rotation_z, t.scale_x, t.scale_y, t.scale_z, t.updated_at
           FROM cosmetic_transforms t JOIN cosmetics c ON c.id=t.cosmetic_id
           WHERE (c.slot IN ('HAT','PET') AND t.slot='head')
              OR (c.slot IN ('CAPE','WINGS','BACKPACK') AND t.slot='backpack');
           DROP TABLE cosmetic_transforms;
-          ALTER TABLE cosmetic_transforms_v6 RENAME TO cosmetic_transforms;`);
+          ALTER TABLE cosmetic_transforms_v8 RENAME TO cosmetic_transforms;`);
         requireThat(this.db.prepare('PRAGMA foreign_key_check').all().length === 0, 'Migración de transforms: referencias inválidas', 500);
-        this.db.exec('PRAGMA user_version=6');
+        this.db.exec('PRAGMA user_version=8');
       });
     } finally { this.db.exec('PRAGMA foreign_keys=ON'); }
   }
@@ -425,12 +429,12 @@ export class Store {
     return this.accountAppearance(accountId);
   }
 
-  updateAccountPresence(accountId, profileUuid, name) {
+  updateAccountPresence(accountId, profileUuid, name, now = Date.now()) {
     profileUuid = uuid(profileUuid); name = text(name, 16);
     requireThat(/^[A-Za-z0-9_]{3,16}$/.test(name), 'Nombre de Minecraft inválido');
     this.db.prepare(`INSERT INTO account_presence VALUES(?,?,?,?) ON CONFLICT(account_id)
       DO UPDATE SET profile_uuid=excluded.profile_uuid,name=excluded.name,updated_at=excluded.updated_at`)
-      .run(accountId, profileUuid, name, Date.now());
+      .run(accountId, profileUuid, name, now);
     return { accountId, profileUuid, name };
   }
 
@@ -438,6 +442,24 @@ export class Store {
     const row = this.db.prepare(`SELECT account_id,profile_uuid,name FROM account_presence WHERE updated_at>=?
       AND (profile_uuid=? OR name=? COLLATE NOCASE) ORDER BY updated_at DESC LIMIT 1`).get(freshAfter, profileUuid, name);
     return row ? { accountId: row.account_id, uuid: row.profile_uuid, name: row.name, equipped: this.accountAppearance(row.account_id) } : undefined;
+  }
+
+  startAccountEmote(accountId, clip, durationMs, now = Date.now()) {
+    requireThat(typeof clip === 'string' && /^[^\x00-\x1f\x7f]{1,256}$/.test(clip), 'Animación inválida');
+    requireThat(Number.isSafeInteger(durationMs) && durationMs >= 250 && durationMs <= 60_000, 'Duración de animación inválida');
+    requireThat(this.db.prepare(`SELECT 1 FROM account_equipment q JOIN cosmetics c ON c.id=q.cosmetic_id
+      JOIN resources r ON r.cosmetic_id=c.id WHERE q.account_id=? AND q.slot='SKIN' AND c.status='published' AND r.avatar_path IS NOT NULL`).get(accountId), 'Equipa una Skin animada primero', 409);
+    this.db.prepare(`INSERT INTO account_emotes VALUES(?,?,?,?) ON CONFLICT(account_id)
+      DO UPDATE SET clip=excluded.clip,started_at=excluded.started_at,expires_at=excluded.expires_at`)
+      .run(accountId, clip, now, now + durationMs);
+    return { clip, startedAt: now, expiresAt: now + durationMs };
+  }
+
+  accountEmoteByIdentity(profileUuid, name, freshAfter, now = Date.now()) {
+    const identity = this.accountAppearanceByIdentity(profileUuid, name, freshAfter);
+    if (!identity) return undefined;
+    const emote = this.db.prepare('SELECT clip,started_at AS startedAt,expires_at AS expiresAt FROM account_emotes WHERE account_id=? AND expires_at>?').get(identity.accountId, now);
+    return emote ? { uuid: identity.uuid, name: identity.name, ...emote } : undefined;
   }
 
   // ── Admin accounts ──────────────────────────────────────────────────────
@@ -497,6 +519,16 @@ export class Store {
     return this.getResource(id);
   }
 
+  saveAvatarPackage(id, avatarPath, avatarSha256, avatarSize) {
+    id = cosmeticId(id);
+    const item = this.cosmetic(id);
+    requireThat(item.slot === 'SKIN', 'El paquete de personaje solo se puede asignar a Skins');
+    if (!this.getResource(id)) this.saveResource(id, '', '', 0, 'application/octet-stream');
+    this.db.prepare('UPDATE resources SET avatar_path=?, avatar_sha256=?, avatar_size=?, uploaded_at=? WHERE cosmetic_id=?')
+      .run(avatarPath, avatarSha256, avatarSize, Date.now(), id);
+    return this.getResource(id);
+  }
+
   savePetAnimation(id, animationName, filePath, sha256, fileSize, actor) {
     id = cosmeticId(id);
     const item = this.cosmetic(id);
@@ -529,7 +561,7 @@ export class Store {
   hasTexture(id) {
     id = cosmeticId(id);
     const legacy = this.getResource(id);
-    return !!legacy?.file_path || this.resourceFileCount(id) > 0;
+    return !!legacy?.file_path || !!legacy?.avatar_path || this.resourceFileCount(id) > 0;
   }
 
   product(id) {

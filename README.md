@@ -1,18 +1,19 @@
-# MineLatino Cosmetics — 1.21.4
+# MineLatino Cosmetics — 1.21.4 / 1.21.11
 
-Primera base **experimental**, no una versión comercial. Fabric y Forge comparten
+Versión **experimental**, no una versión comercial. Fabric y Forge comparten
 el código de cliente con mappings oficiales de Mojang. No modifica el launcher
 ni el backend de producción y no publica actualizaciones automáticamente.
 
 ## Implementado
 
-- Proyectos Fabric (Loader 0.16.14+) y Forge (54.1.0+), Java 21, Minecraft **exactamente 1.21.4**.
+- Proyectos Fabric y Forge, Java 21, para Minecraft 1.21.4 y 1.21.11.
 - Botón en ESC que abre el armario; cierre y regreso al menú original.
 - Configuración interna `config/minelatino-cosmetics/menu.json`, recargada al abrir ESC.
 - Hasta tres botones adicionales: `WARDROBE` o `WEBSITE` (HTTPS MineLatino y confirmación).
 - Renombrado de botones originales mediante claves de traducción. No elimina navegación esencial.
 - Esquema de equipamiento por UUID y pruebas de política compartida.
-- El armario informa que está desconectado: **no vende, no equipa ni renderiza cosméticos todavía**.
+- Armario con equipamiento, preview 3D, capas, modelos Java, mascotas y personajes animados.
+- Formato ZIP abierto para personajes completos, pestaña Skins y ruleta de emojis configurable; consulta [`docs/avatar-packages.md`](docs/avatar-packages.md).
 - API local en [`service/`](service/README.md): catálogo persistente, asignaciones,
   revocaciones, propietarios, auditoría y versiones del menú ESC. Tiene 23 pruebas.
 - Autenticación premium obligatoria mediante el `serverId` de Mojang/Microsoft.
@@ -22,11 +23,17 @@ ni el backend de producción y no publica actualizaciones automáticamente.
 
 Con JDK 21; el wrapper descarga y verifica Gradle 8.12:
 
-```sh
-./gradlew :common:test :fabric:build :forge:build
+```powershell
+$env:JAVA_HOME='C:\Program Files\Java\jdk-21.0.10'
+$env:MINELATINO_BUILD_ROOT='C:\temp\minelatino-cosmetics-build'
+.\gradlew.bat :common:test :fabric:build
+cd forge
+.\gradlew.bat build
 ```
 
-Usar el JAR de `fabric/build/libs` o `forge/build/libs` correspondiente, nunca ambos.
+Forge usa su wrapper propio (Gradle 9.5); Fabric usa el wrapper raíz (Gradle 8.12).
+`MINELATINO_BUILD_ROOT` evita bloqueos de archivos generados cuando el repositorio
+está sincronizado por OneDrive. Usar el JAR Fabric o Forge correspondiente, nunca ambos.
 No instalar en servidores dedicados. Los directorios `run` de desarrollo son aislados.
 En Windows usar `gradlew.bat`. Para iniciar clientes de prueba:
 `./gradlew :fabric:runClient` y `./gradlew :forge:runClient`.

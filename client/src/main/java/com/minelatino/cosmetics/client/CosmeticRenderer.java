@@ -105,6 +105,12 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
             ResourceCache.CachedResource res = resourceCache.getOrDownload(item.cosmeticId());
             if (res == null || res.texture() == null) { pendingResources++; continue; }
 
+            if ("SKIN".equals(item.slot())) {
+                if (res.avatar() != null) { renderAvatar(poseStack,bufferSource,packedLight,renderState,res); submitted++; }
+                else pendingResources++;
+                continue;
+            }
+
             CosmeticModel model = res.model();
             if (model != null && !model.elements.isEmpty()) {
                 renderModel(poseStack, bufferSource, packedLight, renderState, res, model, item.slot(), item.cosmeticId());
@@ -117,6 +123,56 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
         if(local) CosmeticsDiagnostics.changed("WORLD_RENDER","equipped="+equipped.size()+" submitted="+submitted+
                 " resourcesUnavailable="+pendingResources+" unsupportedSlots="+unsupported);
     }
+
+    /** Used by PlayerModelMixin to suppress the vanilla body only after a valid replacement is ready. */
+    public static boolean hasReadySkin(PlayerRenderState state) {
+        List<EquipmentCache.EquippedItem> equipped=equipmentFor(state.id);
+        if(equipped==null)return false;
+        for(var item:equipped)if("SKIN".equals(item.slot())){var resource=CosmeticsClient.instance().resources().getOrDownload(item.cosmeticId());return resource!=null&&resource.avatar()!=null;}
+        return false;
+    }
+
+    private static List<EquipmentCache.EquippedItem> equipmentFor(int entityId){
+        CosmeticPreview.Frame preview=CosmeticPreview.FRAME.get();if(preview!=null&&preview.entityId==entityId)return preview.items;
+        UUID uuid=ENTITY_UUID_MAP.get(entityId);if(Minecraft.getInstance().player!=null&&Minecraft.getInstance().player.getId()==entityId&&CosmeticsClient.instance().auth().isConnected()&&CosmeticsClient.instance().auth().session()!=null)try{uuid=UUID.fromString(formatUuid(CosmeticsClient.instance().auth().session().uuid()));}catch(IllegalArgumentException ignored){}
+        return uuid==null?null:CosmeticsClient.instance().equipment().get(uuid.toString());
+    }
+
+    private void renderAvatar(PoseStack stack,MultiBufferSource buffers,int light,PlayerRenderState state,ResourceCache.CachedResource resource){
+        AvatarPackage avatar=resource.avatar();String clip=AvatarEmoteState.clip(state.id);
+        double seconds=AvatarEmoteState.seconds(state.id);
+        if(clip==null){clip=movementClip(avatar.animations(),state);seconds=state.ageInTicks/20.0;}
+        VertexConsumer consumer=buffers.getBuffer(RenderType.entityCutoutNoCull(resource.texture()));
+        stack.pushPose();try{
+            // Bedrock geometry uses pixels, Y-up and forward -Z, anchored at the feet.
+            stack.translate(0,1.5,0);stack.scale(1,-1,-1);
+            for(AvatarModel.Bone root:avatar.model().roots())renderAvatarBone(stack,consumer,light,avatar,root,clip,seconds,state.yRot,state.xRot);
+        }finally{stack.popPose();}
+    }
+
+    private static String movementClip(AvatarAnimation animations,PlayerRenderState state){
+        for(String candidate:state.deathTime>0?List.of("death"):state.isUsingItem?List.of("use_mainhand","use_offhand"):state.attackTime>0?List.of("swing_hand"):state.isFallFlying?List.of("elytra_fly","fly"):state.isVisuallySwimming?List.of("swim"):state.isPassenger?List.of("ride","sit"):state.isCrouching?List.of(state.speedValue>.02f?"sneaking":"sneak"):state.speedValue>.75f?List.of("run","walk"):state.speedValue>.02f?List.of("walk","run"):List.of("idle"))
+            for(String name:animations.names())if(name.equals(candidate)||name.endsWith("."+candidate))return name;
+        return animations.names().isEmpty()?null:animations.names().getFirst();
+    }
+
+    private static void renderAvatarBone(PoseStack stack,VertexConsumer consumer,int light,AvatarPackage avatar,AvatarModel.Bone bone,String clip,double seconds,float headYaw,float headPitch){
+        AvatarAnimation.Pose animation=clip==null?new AvatarAnimation.Pose(new float[3],new float[3],new float[]{1,1,1}):avatar.animations().sample(clip,bone.name(),seconds,headYaw,headPitch);
+        float[]p=bone.pivot(),r=bone.rotation(),ar=animation.rotation();stack.pushPose();try{
+            stack.translate((p[0]+animation.position()[0])/16.0,(p[1]+animation.position()[1])/16.0,(p[2]+animation.position()[2])/16.0);
+            stack.mulPose(new Quaternionf().rotationZYX((float)Math.toRadians(-(r[2]+ar[2])),(float)Math.toRadians(-(r[1]+ar[1])),(float)Math.toRadians(r[0]+ar[0])));
+            stack.scale(animation.scale()[0],animation.scale()[1],animation.scale()[2]);stack.translate(-p[0]/16.0,-p[1]/16.0,-p[2]/16.0);
+            for(AvatarModel.Cube cube:bone.cubes())renderAvatarCube(stack,consumer,light,avatar.model(),cube);
+            for(AvatarModel.Bone child:avatar.model().children(bone.name()))renderAvatarBone(stack,consumer,light,avatar,child,clip,seconds,headYaw,headPitch);
+        }finally{stack.popPose();}
+    }
+
+    private static void renderAvatarCube(PoseStack stack,VertexConsumer consumer,int light,AvatarModel model,AvatarModel.Cube cube){
+        stack.pushPose();try{float[]p=cube.pivot(),r=cube.rotation();stack.translate(p[0]/16.0,p[1]/16.0,p[2]/16.0);stack.mulPose(new Quaternionf().rotationZYX((float)Math.toRadians(-r[2]),(float)Math.toRadians(-r[1]),(float)Math.toRadians(r[0])));stack.translate(-p[0]/16.0,-p[1]/16.0,-p[2]/16.0);
+            float x1=cube.origin()[0]/16,y1=cube.origin()[1]/16,z1=cube.origin()[2]/16,x2=(cube.origin()[0]+cube.size()[0])/16,y2=(cube.origin()[1]+cube.size()[1])/16,z2=(cube.origin()[2]+cube.size()[2])/16;
+            for(var face:cube.faces().entrySet()){float[][]v=switch(face.getKey()){case"north"->new float[][]{{x2,y2,z1},{x2,y1,z1},{x1,y1,z1},{x1,y2,z1}};case"south"->new float[][]{{x1,y2,z2},{x1,y1,z2},{x2,y1,z2},{x2,y2,z2}};case"east"->new float[][]{{x2,y2,z2},{x2,y1,z2},{x2,y1,z1},{x2,y2,z1}};case"west"->new float[][]{{x1,y2,z1},{x1,y1,z1},{x1,y1,z2},{x1,y2,z2}};case"up"->new float[][]{{x1,y2,z1},{x1,y2,z2},{x2,y2,z2},{x2,y2,z1}};default->new float[][]{{x1,y1,z2},{x1,y1,z1},{x2,y1,z1},{x2,y1,z2}};};AvatarModel.Face uv=face.getValue();float u1=uv.u()/model.textureWidth(),v1=uv.v()/model.textureHeight(),u2=(uv.u()+uv.width())/model.textureWidth(),v2=(uv.v()+uv.height())/model.textureHeight();float[]n=normal(v);float[][]t={{v[0][0],v[0][1],v[0][2],u1,v1},{v[1][0],v[1][1],v[1][2],u1,v2},{v[2][0],v[2][1],v[2][2],u2,v2},{v[3][0],v[3][1],v[3][2],u2,v1}};PoseStack.Pose pose=stack.last();for(float[]vertex:t)addVertex(consumer,pose,vertex,light,n);}
+        }finally{stack.popPose();}}
+    private static float[]normal(float[][]v){float ax=v[1][0]-v[0][0],ay=v[1][1]-v[0][1],az=v[1][2]-v[0][2],bx=v[2][0]-v[0][0],by=v[2][1]-v[0][1],bz=v[2][2]-v[0][2];float x=ay*bz-az*by,y=az*bx-ax*bz,z=ax*by-ay*bx,l=(float)Math.sqrt(x*x+y*y+z*z);return l==0?new float[]{0,1,0}:new float[]{x/l,y/l,z/l};}
 
     private static String formatUuid(String value) {
         String hex = value.replace("-", "");

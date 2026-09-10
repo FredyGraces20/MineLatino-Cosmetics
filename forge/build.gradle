@@ -6,7 +6,7 @@ plugins {
 }
 
 group = 'com.minelatino.cosmetics'
-version = '0.1.0-alpha.20'
+version = '0.1.0-alpha.21'
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 tasks.withType(JavaCompile).configureEach {
@@ -18,7 +18,8 @@ def mcVersion = project.findProperty('mcVersion') ?: '1.21.4'
 def props = new Properties()
 file('../versions.properties').withInputStream { props.load(it) }
 def forgeVersion = props.getProperty("${mcVersion}.forge.version") ?: '54.1.0'
-layout.buildDirectory = layout.projectDirectory.dir("build/${mcVersion}")
+def externalBuildRoot = System.getenv('MINELATINO_BUILD_ROOT')
+layout.buildDirectory = externalBuildRoot ? file("${externalBuildRoot}/${mcVersion}/forge") : layout.projectDirectory.dir("build/${mcVersion}")
 if (!props.getProperty("${mcVersion}.forge.version")) {
     throw new GradleException("Forge is not configured for Minecraft ${mcVersion}")
 }
@@ -49,7 +50,6 @@ def versionForgeSrc = "src/main/java-${mcVersion}"
 def selectedForgeSrc = file(versionForgeSrc).exists() ? versionForgeSrc : 'src/main/java'
 sourceSets.main {
     java.setSrcDirs([selectedForgeSrc, '../common/src/main/java', "${selectedClient}/src/main/java"])
-    java.exclude '**/mixin/**'
     resources.setSrcDirs(['src/main/resources', "${selectedClient}/src/main/resources"])
     resources.exclude 'minelatino_cosmetics.mixins.json'
     resources.exclude 'fabric.mod.json'
@@ -61,4 +61,8 @@ processResources {
     filesMatching('META-INF/mods.toml') {
         expand(version: project.version, mcVersion: mcVersion, forgeVersion: forgeVersion)
     }
+}
+
+tasks.named('jar') {
+    manifest { attributes('MixinConfigs': 'minelatino_cosmetics_avatar.mixins.json') }
 }
