@@ -16,8 +16,9 @@ export function cosmeticId(value) {
   requireThat(typeof value === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value), 'ID de cosmético inválido');
   return value;
 }
-export const SLOTS = ['CAPE', 'HAT', 'WINGS', 'BACKPACK', 'PET', 'SKIN'];
-export const TRANSFORM_SLOTS = ['cape', 'hat', 'wings', 'backpack', 'pet', 'skin'];
+export const SLOTS = ['CAPE', 'HAT', 'WINGS', 'BACKPACK', 'PET'];
+const SUPPORTED_SLOTS_SQL = SLOTS.map(slot => `'${slot}'`).join(',');
+export const TRANSFORM_SLOTS = ['cape', 'hat', 'wings', 'backpack', 'pet'];
 
 /** Check if hostname matches an allowed domain or any of its subdomains. */
 function isAllowedHost(hostname, allowedDomains) {
@@ -103,10 +104,17 @@ export class Store {
     this.migrateCosmeticSlots();
     this.migrateCosmeticTransforms();
     this.migrateLegacyAccountEntitlements();
+    this.retireLegacySkins();
     this.repairInvalidPublishedCosmetics();
   }
+  retireLegacySkins() {
+    this.transaction(() => {
+      const result = this.db.prepare("UPDATE cosmetics SET status='retired',revision=revision+1 WHERE slot='SKIN' AND status<>'retired'").run();
+      if (Number(result.changes)) this.audit('system', 'catalog.retire-skins', { count: Number(result.changes) });
+    });
+  }
   repairInvalidPublishedCosmetics() {
-    const invalid = this.db.prepare(`SELECT id FROM cosmetics c WHERE c.status='published'
+    const invalid = this.db.prepare(`SELECT id FROM cosmetics c WHERE c.status='published' AND c.slot<>'SKIN'
       AND NOT EXISTS(SELECT 1 FROM resources r WHERE r.cosmetic_id=c.id AND (r.file_path<>'' OR r.avatar_path IS NOT NULL))
       AND NOT EXISTS(SELECT 1 FROM resource_files f WHERE f.cosmetic_id=c.id)`).all();
     if (invalid.length === 0) return;
@@ -195,11 +203,11 @@ export class Store {
     this.db.prepare('INSERT INTO audit(actor,action,payload,at) VALUES(?,?,?,?)').run(actor, action, JSON.stringify(payload), Date.now());
   }
   catalog(admin, offset = 0) {
-    return this.db.prepare(`SELECT * FROM cosmetics ${admin ? '' : "WHERE status='published'"} ORDER BY id LIMIT 50 OFFSET ?`).all(offset);
+    return this.db.prepare(`SELECT * FROM cosmetics WHERE slot IN (${SUPPORTED_SLOTS_SQL}) ${admin ? '' : "AND status='published'"} ORDER BY id LIMIT 50 OFFSET ?`).all(offset);
   }
   cosmetic(id) {
     const item = this.db.prepare('SELECT * FROM cosmetics WHERE id=?').get(cosmeticId(id));
-    requireThat(item, 'Cosmético no encontrado', 404); return item;
+    requireThat(item && SLOTS.includes(item.slot), 'Cosmético no encontrado', 404); return item;
   }
   saveCosmetic(id, input, actor) {
     id = cosmeticId(id);
@@ -256,12 +264,12 @@ export class Store {
     owner = uuid(owner);
     return {
       uuid: owner,
-      owned: this.db.prepare('SELECT c.* FROM entitlements e JOIN cosmetics c ON c.id=e.cosmetic_id WHERE e.uuid=? AND e.active=1 ORDER BY c.id').all(owner),
+      owned: this.db.prepare("SELECT c.* FROM entitlements e JOIN cosmetics c ON c.id=e.cosmetic_id WHERE e.uuid=? AND e.active=1 AND c.slot<>'SKIN' ORDER BY c.id").all(owner),
       equipped: this.appearance(owner),
     };
   }
   appearance(owner) {
-    return this.db.prepare("SELECT q.slot,q.cosmetic_id AS cosmeticId FROM equipment q JOIN entitlements e ON e.uuid=q.uuid AND e.cosmetic_id=q.cosmetic_id JOIN cosmetics c ON c.id=q.cosmetic_id WHERE q.uuid=? AND e.active=1 AND c.status='published' ORDER BY q.slot").all(uuid(owner));
+    return this.db.prepare("SELECT q.slot,q.cosmetic_id AS cosmeticId FROM equipment q JOIN entitlements e ON e.uuid=q.uuid AND e.cosmetic_id=q.cosmetic_id JOIN cosmetics c ON c.id=q.cosmetic_id WHERE q.uuid=? AND e.active=1 AND c.status='published' AND c.slot<>'SKIN' ORDER BY q.slot").all(uuid(owner));
   }
   equip(owner, slot, id) {
     owner = uuid(owner);
@@ -430,12 +438,12 @@ export class Store {
   accountAppearance(accountId) {
     return this.db.prepare(`SELECT q.slot,q.cosmetic_id AS cosmeticId FROM account_equipment q
       JOIN account_entitlements e ON e.account_id=q.account_id AND e.cosmetic_id=q.cosmetic_id
-      JOIN cosmetics c ON c.id=q.cosmetic_id WHERE q.account_id=? AND e.active=1 AND c.status='published' ORDER BY q.slot`).all(accountId);
+      JOIN cosmetics c ON c.id=q.cosmetic_id WHERE q.account_id=? AND e.active=1 AND c.status='published' AND c.slot<>'SKIN' ORDER BY q.slot`).all(accountId);
   }
 
   accountWardrobe(accountId) {
     return { accountId, uuid: accountId, owned: this.db.prepare(`SELECT c.* FROM account_entitlements e JOIN cosmetics c ON c.id=e.cosmetic_id
-      WHERE e.account_id=? AND e.active=1 ORDER BY c.id`).all(accountId), equipped: this.accountAppearance(accountId) };
+      WHERE e.account_id=? AND e.active=1 AND c.slot<>'SKIN' ORDER BY c.id`).all(accountId), equipped: this.accountAppearance(accountId) };
   }
 
   accountEquip(accountId, slot, id) {
@@ -465,26 +473,6 @@ export class Store {
       AND (profile_uuid=? OR name=? COLLATE NOCASE) ORDER BY updated_at DESC LIMIT 1`).get(freshAfter, profileUuid, name);
     return row ? { accountId: row.account_id, uuid: row.profile_uuid, name: row.name, equipped: this.accountAppearance(row.account_id) } : undefined;
   }
-
-  startAccountEmote(accountId, clip, durationMs, now = Date.now()) {
-    requireThat(typeof clip === 'string' && /^[^\x00-\x1f\x7f]{1,256}$/.test(clip), 'Animación inválida');
-    requireThat(Number.isSafeInteger(durationMs) && durationMs >= 250 && durationMs <= 60_000, 'Duración de animación inválida');
-    requireThat(this.db.prepare(`SELECT 1 FROM account_equipment q JOIN cosmetics c ON c.id=q.cosmetic_id
-      JOIN resources r ON r.cosmetic_id=c.id WHERE q.account_id=? AND q.slot='SKIN' AND c.status='published' AND r.avatar_path IS NOT NULL`).get(accountId), 'Equipa una Skin animada primero', 409);
-    this.db.prepare(`INSERT INTO account_emotes VALUES(?,?,?,?) ON CONFLICT(account_id)
-      DO UPDATE SET clip=excluded.clip,started_at=excluded.started_at,expires_at=excluded.expires_at`)
-      .run(accountId, clip, now, now + durationMs);
-    return { clip, startedAt: now, expiresAt: now + durationMs };
-  }
-
-  accountEmoteByIdentity(profileUuid, name, freshAfter, now = Date.now()) {
-    const identity = this.accountAppearanceByIdentity(profileUuid, name, freshAfter);
-    if (!identity) return undefined;
-    const emote = this.db.prepare('SELECT clip,started_at AS startedAt,expires_at AS expiresAt FROM account_emotes WHERE account_id=? AND expires_at>?').get(identity.accountId, now);
-    return emote ? { uuid: identity.uuid, name: identity.name, ...emote } : undefined;
-  }
-
-  // ── Admin accounts ──────────────────────────────────────────────────────
 
   adminCount() { return this.db.prepare('SELECT COUNT(*) AS count FROM admins').get().count; }
 
@@ -541,16 +529,6 @@ export class Store {
     return this.getResource(id);
   }
 
-  saveAvatarPackage(id, avatarPath, avatarSha256, avatarSize) {
-    id = cosmeticId(id);
-    const item = this.cosmetic(id);
-    requireThat(item.slot === 'SKIN', 'El paquete de personaje solo se puede asignar a Skins');
-    if (!this.getResource(id)) this.saveResource(id, '', '', 0, 'application/octet-stream');
-    this.db.prepare('UPDATE resources SET avatar_path=?, avatar_sha256=?, avatar_size=?, uploaded_at=? WHERE cosmetic_id=?')
-      .run(avatarPath, avatarSha256, avatarSize, Date.now(), id);
-    return this.getResource(id);
-  }
-
   savePetAnimation(id, animationName, filePath, sha256, fileSize, actor) {
     id = cosmeticId(id);
     const item = this.cosmetic(id);
@@ -583,7 +561,7 @@ export class Store {
   hasTexture(id) {
     id = cosmeticId(id);
     const legacy = this.getResource(id);
-    return !!legacy?.file_path || !!legacy?.avatar_path || this.resourceFileCount(id) > 0;
+    return !!legacy?.file_path || this.resourceFileCount(id) > 0;
   }
 
   product(id) {
@@ -644,6 +622,7 @@ export class Store {
 
   getTransforms(id) {
     id = cosmeticId(id);
+    this.cosmetic(id);
     const rows = this.db.prepare('SELECT * FROM cosmetic_transforms WHERE cosmetic_id=?').all(id);
     const result = {};
     for (const row of rows) {
@@ -683,7 +662,7 @@ export class Store {
   }
 
   getAllTransforms() {
-    const rows = this.db.prepare('SELECT cosmetic_id, slot, translation_x, translation_y, translation_z, rotation_x, rotation_y, rotation_z, scale_x, scale_y, scale_z FROM cosmetic_transforms').all();
+    const rows = this.db.prepare('SELECT cosmetic_id, slot, translation_x, translation_y, translation_z, rotation_x, rotation_y, rotation_z, scale_x, scale_y, scale_z FROM cosmetic_transforms WHERE slot<>\'skin\'').all();
     const result = {};
     for (const row of rows) {
       if (!result[row.cosmetic_id]) result[row.cosmetic_id] = {};

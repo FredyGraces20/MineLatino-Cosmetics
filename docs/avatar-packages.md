@@ -3,7 +3,8 @@
 > Función retirada del mod desde `0.1.0-alpha.26`. El armario ya no ofrece
 > Skins, el cliente ignora equipamientos SKIN antiguos y no descarga ni renderiza
 > estos paquetes. La ruleta de animaciones asociada también fue retirada.
-> Lo siguiente documenta el formato histórico del panel, no una función vigente del mod.
+> También se retiraron la carga, distribución y selección de estos paquetes del
+> panel web y launcher. Lo siguiente documenta únicamente el formato histórico.
 
 El mod usa un formato abierto basado en ZIP. Los modelos `.ysm` autorizados se
 convierten previamente con la herramienta local; el juego no necesita instalar YSM

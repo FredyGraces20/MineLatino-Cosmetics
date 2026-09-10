@@ -48,6 +48,15 @@ test('settlement is atomic, idempotent and grants ownership used by the mod', t 
   assert.equal(store.appearance(owner.uuid)[0].cosmeticId, 'pack');
 });
 
+test('pending legacy skin orders cannot deliver removed products', t => {
+  const { store, commerce } = fixture(t);
+  const order = commerce.createOrder(owner, 'pack', 'manual', 'legacy-skin-order-01');
+  store.db.prepare("UPDATE cosmetics SET slot='SKIN' WHERE id='pack'").run();
+  assert.throws(() => commerce.settleVerified({ orderId: order.id, provider: 'manual', paymentId: 'legacy-payment', amountMinor: 999, currency: 'USD', status: 'approved' }), { status: 404 });
+  assert.equal(store.db.prepare('SELECT status FROM cosmetic_orders WHERE id=?').get(order.id).status, 'pending');
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM entitlements').get().n, 0);
+});
+
 test('offline MineLatino accounts can purchase without a premium UUID', t => {
   const { store, commerce } = fixture(t);
   const accountId = 'abcdefabcdefabcdefabcdefabcdefab';

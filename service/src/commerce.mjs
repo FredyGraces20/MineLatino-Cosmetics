@@ -121,6 +121,7 @@ export class Commerce {
         return { duplicate: true, orderId };
       }
       requireThat(order.status === 'pending', 'Compra no pendiente', 409);
+      this.store.cosmetic(order.cosmetic_id); // Retired cosmetic types cannot be delivered.
       requireThat(!this.store.db.prepare('SELECT 1 FROM cosmetic_orders WHERE provider=? AND payment_id=?').get(provider, paymentId), 'Pago utilizado en otra compra', 409);
       const deliveredAt = Date.now();
       this.store.db.prepare("UPDATE cosmetic_orders SET status='paid',payment_id=?,delivered_at=?,updated_at=? WHERE id=?").run(paymentId, deliveredAt, deliveredAt, orderId);

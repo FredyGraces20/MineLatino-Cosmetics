@@ -3,12 +3,9 @@ import { PlayerAuth } from './auth.mjs';
 import { createHash, randomBytes, pbkdf2Sync } from 'node:crypto';
 import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs';
 import { join, extname, basename } from 'node:path';
-import { inflateRawSync } from 'node:zlib';
 
 const ALLOWED_EXTENSIONS = new Set(['.png', '.json']);
 const MAX_RESOURCE_SIZE = 2 * 1024 * 1024; // 2 MB
-const MAX_AVATAR_PACKAGE_SIZE = 32 * 1024 * 1024;
-const MAX_AVATAR_EXPANDED_SIZE = 96 * 1024 * 1024;
 
 async function body(request) {
   requireThat(request.headers.get('content-type')?.split(';')[0].trim() === 'application/json', 'Se requiere application/json', 415);
@@ -69,81 +66,6 @@ function validateResourceFile(buffer, filename) {
   return ext;
 }
 
-function parseJsonc(source) {
-  let output = '', string = false, escape = false, line = false, block = false;
-  for (let i = 0; i < source.length; i++) {
-    const c = source[i], n = source[i + 1];
-    if (line) { if (c === '\n') { line = false; output += c; } continue; }
-    if (block) { if (c === '*' && n === '/') { block = false; i++; } continue; }
-    if (string) { output += c; if (escape) escape = false; else if (c === '\\') escape = true; else if (c === '"') string = false; continue; }
-    if (c === '"') { string = true; output += c; continue; }
-    if (c === '/' && n === '/') { line = true; i++; continue; }
-    if (c === '/' && n === '*') { block = true; i++; continue; }
-    output += c;
-  }
-  return JSON.parse(output.replace(/,\s*([}\]])/g, '$1'));
-}
-
-/** Inspect and validate a MineLatino avatar package without extracting it. */
-function validateAvatarPackage(buffer) {
-  requireThat(buffer.length >= 22 && buffer.readUInt32LE(0) === 0x04034b50, 'ZIP de personaje inválido');
-  let eocd = -1;
-  for (let i = buffer.length - 22; i >= Math.max(0, buffer.length - 65_557); i--) {
-    if (buffer.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
-  }
-  requireThat(eocd >= 0, 'ZIP incompleto');
-  const count = buffer.readUInt16LE(eocd + 10), centralSize = buffer.readUInt32LE(eocd + 12), centralOffset = buffer.readUInt32LE(eocd + 16);
-  requireThat(count > 0 && count <= 256 && centralOffset + centralSize <= eocd, 'Cantidad de archivos ZIP no admitida');
-  const entries = [];
-  let offset = centralOffset, expanded = 0;
-  for (let i = 0; i < count; i++) {
-    requireThat(offset + 46 <= buffer.length && buffer.readUInt32LE(offset) === 0x02014b50, 'Directorio ZIP inválido');
-    const flags = buffer.readUInt16LE(offset + 8), method = buffer.readUInt16LE(offset + 10);
-    const compressed = buffer.readUInt32LE(offset + 20), size = buffer.readUInt32LE(offset + 24);
-    const nameLength = buffer.readUInt16LE(offset + 28), extraLength = buffer.readUInt16LE(offset + 30), commentLength = buffer.readUInt16LE(offset + 32);
-    const localOffset = buffer.readUInt32LE(offset + 42), end = offset + 46 + nameLength + extraLength + commentLength;
-    requireThat(end <= buffer.length && !(flags & 1) && (method === 0 || method === 8), 'ZIP cifrado o compresión no admitida');
-    const name = buffer.subarray(offset + 46, offset + 46 + nameLength).toString('utf8').replaceAll('\\', '/');
-    requireThat(name.length > 0 && name.length <= 240 && !name.startsWith('/') && !/^[A-Za-z]:/.test(name) && !name.split('/').includes('..'), 'Ruta insegura dentro del ZIP');
-    expanded += size;
-    requireThat(size <= 16 * 1024 * 1024 && expanded <= MAX_AVATAR_EXPANDED_SIZE, 'Paquete descomprimido demasiado grande');
-    entries.push({ name, flags, method, compressed, size, localOffset }); offset = end;
-  }
-  const files = entries.filter(entry => !entry.name.endsWith('/'));
-  const findUnique = suffix => {
-    const found = files.filter(entry => entry.name === suffix || entry.name.endsWith('/' + suffix));
-    requireThat(found.length === 1, `El paquete debe contener exactamente un ${suffix}`); return found[0];
-  };
-  const read = entry => {
-    const p = entry.localOffset;
-    requireThat(p + 30 <= buffer.length && buffer.readUInt32LE(p) === 0x04034b50, 'Entrada ZIP inválida');
-    const nameLength = buffer.readUInt16LE(p + 26), extraLength = buffer.readUInt16LE(p + 28), start = p + 30 + nameLength + extraLength;
-    requireThat(start + entry.compressed <= buffer.length, 'Entrada ZIP truncada');
-    const bytes = buffer.subarray(start, start + entry.compressed);
-    const result = entry.method === 0 ? Buffer.from(bytes) : inflateRawSync(bytes, { maxOutputLength: Math.min(entry.size + 1, 16 * 1024 * 1024 + 1) });
-    requireThat(result.length === entry.size, 'Tamaño ZIP inconsistente'); return result;
-  };
-  const modelEntry = findUnique('main.json');
-  const namedTextures = files.filter(entry => entry.name === 'texture.png' || entry.name.endsWith('/texture.png'));
-  const allTextures = files.filter(entry => entry.name.toLowerCase().endsWith('.png'));
-  const textureEntry = namedTextures.length === 1 ? namedTextures[0] : namedTextures.length === 0 && allTextures.length === 1 ? allTextures[0] : null;
-  requireThat(textureEntry, 'El paquete debe contener texture.png o una única textura PNG');
-  let model;
-  try { model = parseJsonc(read(modelEntry).toString('utf8')); } catch { throw new ApiError(400, 'main.json inválido'); }
-  const geometries = model?.['minecraft:geometry'];
-  requireThat(Array.isArray(geometries) && geometries.length > 0 && Array.isArray(geometries[0]?.bones), 'main.json no contiene geometría Bedrock');
-  requireThat(geometries[0].bones.length <= 512, 'El modelo excede 512 huesos');
-  const texture = read(textureEntry);
-  requireThat(texture.length >= 8 && texture[0] === 0x89 && texture[1] === 0x50 && texture[2] === 0x4e && texture[3] === 0x47, 'texture.png inválida');
-  const animationNames = [];
-  for (const entry of files.filter(item => /(?:^|\/)\w+(?:\.\w+)*\.animation\.json$/i.test(item.name))) {
-    let parsed; try { parsed = parseJsonc(read(entry).toString('utf8')); } catch { throw new ApiError(400, `${entry.name} contiene JSON inválido`); }
-    animationNames.push(...Object.keys(parsed?.animations || {}));
-  }
-  requireThat(animationNames.length <= 512, 'El paquete contiene demasiadas animaciones');
-  return { files: files.length, bones: geometries[0].bones.length, animations: [...new Set(animationNames)].sort() };
-}
-
 export function createApi({ store, adminToken, adminAuth, accountAuth, commerce, resourceDir, origin = 'http://127.0.0.1:8787', playerAuth = new PlayerAuth(), premiumEnabled = true, now = Date.now }) {
   requireThat(typeof adminToken === 'string' && adminToken.length >= 32, 'Configura una clave administrativa de al menos 32 caracteres');
   if (resourceDir) mkdirSync(resourceDir, { recursive: true });
@@ -167,7 +89,7 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
   function resourceVersion(id, resource = store.getResource(id)) {
     const files = store.getResourceFiles(id);
     const petAnimation = store.getPetAnimation(id);
-    return createHash('sha256').update(JSON.stringify([resource?.sha256, resource?.model_sha256, resource?.avatar_sha256,
+    return createHash('sha256').update(JSON.stringify([resource?.sha256, resource?.model_sha256,
       files.map(f => [f.name, f.sha256, f.uploaded_at, f.mcmeta_path, f.mcmeta_size]),
       petAnimation?.sha256, petAnimation?.animation_name, petAnimation?.updated_at])).digest('hex').slice(0, 12);
   }
@@ -252,10 +174,6 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
           const input = await body(request);
           return json({ equipped: store.accountEquip(accountId, input.slot, input.cosmeticId) });
         }
-        if (method === 'POST' && path === '/v1/account/emote') {
-          const input = await body(request);
-          return json({ emote: store.startAccountEmote(accountId, input.clip, input.durationMs, time) });
-        }
         if (method === 'GET' && path === '/v1/account/orders') {
           requireThat(identity.session.scope === 'account', 'Permiso de sesión insuficiente', 403);
           requireThat(commerce, 'Comercio no configurado', 503);
@@ -287,7 +205,6 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
           const files = store.getResourceFiles(item.id);
           const hasTexture = !!resource?.file_path || files.length > 0;
           return { ...item, ...store.product(item.id), hasTexture, hasModel: !!resource?.model_path,
-            hasAvatarPackage: !!resource?.avatar_path,
             textureCount: files.length,
             resourceVersion: resourceVersion(item.id, resource) };
         });
@@ -302,6 +219,7 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
       const resourceMatch = path.match(/^\/v1\/resources\/([a-z0-9_-]+)$/);
       if (method === 'GET' && resourceMatch) {
         requireThat(resourceDir, 'Recursos no disponibles', 503);
+        requireThat(url.searchParams.get('type') !== 'avatar-package', 'Recurso retirado', 410);
         const id = cosmeticId(resourceMatch[1]);
         const res = store.getResource(id);
         requireThat(res, 'Recurso no encontrado', 404);
@@ -321,15 +239,7 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
         const fileName = url.searchParams.get('file');
         if (typeParam === 'manifest') {
           const files = store.getResourceFiles(id).map(f => ({ name: f.name, hasMcmeta: !!f.mcmeta_path }));
-          return resourceResponse(Response.json({ files, hasLegacy: !!res.file_path, hasAvatarPackage: !!res.avatar_path, resourceVersion: version }, { headers: { 'Cache-Control': 'no-cache' } }));
-        }
-        if (typeParam === 'avatar-package') {
-          requireThat(res.avatar_path, 'Paquete de personaje no disponible', 404);
-          const avatarFile = join(resourceDir, res.avatar_path);
-          requireThat(existsSync(avatarFile), 'Archivo de personaje no encontrado', 404);
-          const avatarData = readFileSync(avatarFile);
-          requireThat(createHash('sha256').update(avatarData).digest('hex') === res.avatar_sha256, 'Integridad del personaje comprometida', 500);
-          return resourceResponse(binary(avatarData, 'application/zip', true));
+          return resourceResponse(Response.json({ files, hasLegacy: !!res.file_path, resourceVersion: version }, { headers: { 'Cache-Control': 'no-cache' } }));
         }
         if (typeParam === 'animation-config') {
           const animation = store.getPetAnimation(id);
@@ -519,40 +429,6 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
             requireThat(store.hasTexture(id), 'Sube al menos una textura antes de publicar el cosmético', 409);
           }
           return json(store.saveCosmetic(id, input, actor));
-        }
-
-        // Full animated character package. The public format is a regular ZIP
-        // containing main.json, texture.png and optional *.animation.json files.
-        const avatarPackageMatch = path.match(/^\/v1\/admin\/cosmetics\/catalog\/([a-z0-9_-]+)\/avatar-package$/);
-        if (method === 'PUT' && avatarPackageMatch) {
-          requireThat(resourceDir, 'Recursos no disponibles', 503);
-          const id = cosmeticId(avatarPackageMatch[1]);
-          requireThat(store.cosmetic(id).slot === 'SKIN', 'El cosmético debe pertenecer a Skins');
-          const filename = request.headers.get('x-filename') || 'avatar.zip';
-          requireThat(extname(filename).toLowerCase() === '.zip' && basename(filename) === filename, 'El personaje debe ser un ZIP', 415);
-          const buffer = await binaryBody(request, MAX_AVATAR_PACKAGE_SIZE);
-          const summary = validateAvatarPackage(buffer);
-          const sha256 = createHash('sha256').update(buffer).digest('hex');
-          const filePath = `${id}_avatar.zip`;
-          const old = store.getResource(id);
-          if (old?.avatar_path && old.avatar_path !== filePath) {
-            const oldPath = join(resourceDir, old.avatar_path); if (existsSync(oldPath)) unlinkSync(oldPath);
-          }
-          writeFileSync(join(resourceDir, filePath), buffer);
-          const resource = store.saveAvatarPackage(id, filePath, sha256, buffer.length);
-          store.audit(actor, 'resource.avatar.upload', { cosmeticId: id, sha256, fileSize: buffer.length, ...summary });
-          return json({ resource, summary });
-        }
-        if (method === 'DELETE' && avatarPackageMatch) {
-          requireThat(resourceDir, 'Recursos no disponibles', 503);
-          const id = cosmeticId(avatarPackageMatch[1]);
-          const old = store.getResource(id);
-          if (old?.avatar_path) {
-            const oldPath = join(resourceDir, old.avatar_path); if (existsSync(oldPath)) unlinkSync(oldPath);
-            store.saveAvatarPackage(id, null, null, null);
-            store.audit(actor, 'resource.avatar.delete', { cosmeticId: id });
-          }
-          return json({ deleted: !!old?.avatar_path });
         }
 
         // Resource upload (texture PNG)
@@ -852,15 +728,6 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
           if (verified) players.push({ uuid: verified.uuid, name: verified.name, equipped: store.appearance(verified.uuid) });
         }
         return json({ players, identityMode: accountAuth ? 'minelatino-account' : 'premium-uuid' });
-      }
-      if (method === 'GET' && path === '/v1/cosmetics/emotes') {
-        const ids = [...new Set((url.searchParams.get('uuids') ?? '').split(',').filter(Boolean).map(uuid))];
-        const names = [...new Set((url.searchParams.get('names') ?? '').split(',').filter(name => /^[A-Za-z0-9_]{3,16}$/.test(name)))];
-        requireThat(ids.length <= 50 && names.length <= 50, 'Máximo 50 jugadores');
-        const items = [];
-        for (const id of ids) { const active = store.accountEmoteByIdentity(id, '', time - 2 * 60 * 60 * 1000, time); if (active) items.push(active); }
-        for (const name of names) { const active = store.accountEmoteByIdentity('0'.repeat(32), name, time - 2 * 60 * 60 * 1000, time); if (active && !items.some(item => item.uuid === active.uuid && item.clip === active.clip)) items.push(active); }
-        return json({ items });
       }
       if (path.startsWith('/v1/auth/') || path.startsWith('/v1/cosmetics/me/')) {
         // Never trust a UUID supplied by the client. Cosmetics ownership and

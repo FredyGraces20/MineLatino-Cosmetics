@@ -69,17 +69,17 @@ test('v4 slot migration preserves ownership and equipment and is idempotent', t 
   } finally { store.close(); }
 });
 
-test('all six cosmetic types persist independent transforms and reject mismatched types', t => {
+test('all five cosmetic types persist independent transforms and reject mismatched types', t => {
   const { store } = fixture(t);
   for (const [id, catalogSlot, transformSlot] of [
     ['hat', 'HAT', 'hat'], ['cape', 'CAPE', 'cape'], ['wings', 'WINGS', 'wings'],
-    ['pack', 'BACKPACK', 'backpack'], ['pet', 'PET', 'pet'], ['skin', 'SKIN', 'skin'],
+    ['pack', 'BACKPACK', 'backpack'], ['pet', 'PET', 'pet'],
   ]) {
     store.saveCosmetic(id, { ...catalog, name: id, slot: catalogSlot }, 'test');
     const transform = { translation: [1, 2, 3], rotation: [4, 5, 6], scale: [1.1, 1.2, 1.3] };
     assert.deepEqual(store.saveTransform(id, transformSlot, transform, 'test')[transformSlot].translation, [1, 2, 3]);
   }
-  assert.deepEqual(Object.keys(store.getAllTransforms()).sort(), ['cape', 'hat', 'pack', 'pet', 'skin', 'wings']);
+  assert.deepEqual(Object.keys(store.getAllTransforms()).sort(), ['cape', 'hat', 'pack', 'pet', 'wings']);
   assert.throws(() => store.saveTransform('cape', 'backpack', { translation: [0, 0, 0] }, 'test'), { status: 409 });
 });
 
@@ -197,27 +197,6 @@ test('game token equips and publishes account cosmetics for offline identities',
   assert.deepEqual(appearance.data.players[0].equipped, [{ slot: 'CAPE', cosmeticId: 'cape' }]);
 });
 
-test('equipped animated skins broadcast emotes through the MineLatino account identity', async t => {
-  const now = 1_800_000_000_000;
-  const { store, request } = fixture(t, { now: () => now });
-  store.saveCosmetic('avatar', { ...catalog, name: 'Avatar', slot: 'SKIN' }, 'admin');
-  store.saveResource('avatar', '', '', 0, 'application/octet-stream');
-  store.saveAvatarPackage('avatar', 'avatar.zip', 'a'.repeat(64), 123);
-  const registered = await request('/v1/account/register', { method: 'POST', data: {
-    email: 'emote@example.com', password: 'correct-horse-emote', nick: 'EmoteUser',
-  }});
-  const accountId = registered.data.account.accountId;
-  store.accountEntitlement({ accountId, cosmeticId: 'avatar' }, true, 'test');
-  assert.equal((await request('/v1/account/equipment', { method: 'PUT', token: registered.data.token,
-    data: { slot: 'SKIN', cosmeticId: 'avatar' } })).status, 200);
-  assert.equal((await request('/v1/account/presence', { method: 'POST', token: registered.data.token,
-    data: { uuid: OTHER, name: 'EmoteUser' } })).status, 200);
-  const played = await request('/v1/account/emote', { method: 'POST', token: registered.data.token,
-    data: { clip: 'extra0', durationMs: 2200 } });
-  assert.equal(played.status, 200); assert.equal(played.data.emote.expiresAt, now + 2200);
-  const visible = await request(`/v1/cosmetics/emotes?uuids=${OTHER}&names=EmoteUser`);
-  assert.deepEqual(visible.data.items, [{ uuid: OTHER, name: 'EmoteUser', clip: 'extra0', startedAt: now, expiresAt: now + 2200 }]);
-});
 
 test('player accounts can update themselves and administrators can suspend or delete them', async t => {
   const { request } = fixture(t);
@@ -735,15 +714,36 @@ test('catalog includes resource info for admin and public views', async t => {
   assert.equal(publicCatalog.data.items[0].hasResource, true);
 });
 
-test('storefront exposes animated Skin package availability to the launcher', async t => {
+test('removed skins cannot be created, distributed or equipped', async t => {
   const { store, request } = fixtureWithResources(t);
-  store.saveCosmetic('avatar', { ...catalog, name: 'Avatar', slot: 'SKIN' }, 'admin');
-  store.saveResource('avatar', '', '', 0, 'application/octet-stream');
-  store.saveAvatarPackage('avatar', 'avatar.zip', 'a'.repeat(64), 123);
-  const storefront = await request('/v1/storefront/catalog');
-  assert.equal(storefront.status, 200);
-  assert.equal(storefront.data.items[0].slot, 'SKIN');
-  assert.equal(storefront.data.items[0].hasAvatarPackage, true);
+  assert.throws(() => store.saveCosmetic('skin', { ...catalog, slot: 'SKIN' }, 'admin'), { status: 400 });
+  store.db.prepare('INSERT INTO cosmetics VALUES(?,?,?,?,?)').run('legacy-skin', 'Old Skin', 'SKIN', 'published', 1);
+  store.db.prepare('INSERT INTO entitlements VALUES(?,?,1)').run(OWNER, 'legacy-skin');
+  store.db.prepare('INSERT INTO equipment VALUES(?,?,?)').run(OWNER, 'SKIN', 'legacy-skin');
+  assert.deepEqual(store.wardrobe(OWNER).owned, []);
+  assert.deepEqual(store.appearance(OWNER), []);
+  assert.throws(() => store.entitlement({ ...grant, cosmeticId: 'legacy-skin' }, true, 'admin'), { status: 404 });
+  for (const path of ['/v1/storefront/catalog', '/v1/cosmetics/catalog', '/v1/admin/cosmetics/catalog']) {
+    const result = await request(path, { token: ADMIN });
+    assert.equal(result.status, 200); assert.deepEqual(result.data.items, []);
+  }
+  assert.throws(() => store.equip(OWNER, 'SKIN', 'legacy-skin'), { status: 400 });
+  assert.equal((await request('/v1/admin/cosmetics/catalog/legacy-skin/avatar-package', { token: ADMIN, method: 'PUT', body: Buffer.from('zip') })).status, 404);
+  assert.equal((await request('/v1/resources/legacy-skin?type=avatar-package')).status, 410);
+  assert.equal((await request('/v1/cosmetics/emotes')).status, 404);
+  store.retireLegacySkins();
+  assert.equal(store.db.prepare("SELECT status FROM cosmetics WHERE id='legacy-skin'").get().status, 'retired');
+  assert.equal(store.db.prepare("SELECT COUNT(*) AS n FROM entitlements WHERE cosmetic_id='legacy-skin'").get().n, 1);
+  store.retireLegacySkins();
+  assert.equal(store.db.prepare("SELECT revision FROM cosmetics WHERE id='legacy-skin'").get().revision, 2);
+  const accountId = 'a'.repeat(32);
+  store.createPlayerAccount({ accountId, email: 'legacy@example.com', nick: 'LegacyUser', passwordHash: 'b'.repeat(64), passwordSalt: 'c'.repeat(32) });
+  store.db.prepare('INSERT INTO account_entitlements VALUES(?,?,1)').run(accountId, 'legacy-skin');
+  store.db.prepare('INSERT INTO account_equipment VALUES(?,?,?)').run(accountId, 'SKIN', 'legacy-skin');
+  assert.deepEqual(store.accountWardrobe(accountId).owned, []);
+  assert.deepEqual(store.accountAppearance(accountId), []);
+  assert.throws(() => store.accountEntitlement({ accountId, cosmeticId: 'legacy-skin' }, true, 'admin'), { status: 404 });
+  assert.throws(() => store.accountEquip(accountId, 'SKIN', 'legacy-skin'), { status: 400 });
 });
 
 test('pet animation can be uploaded, selected and distributed to the mod', async t => {

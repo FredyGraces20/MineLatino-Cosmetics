@@ -49,7 +49,6 @@ administrativos, permisos de archivos, copias verificadas y operación multiinst
 | POST `/v1/account/password/reset` | Consumir el código y definir una contraseña nueva |
 | PUT `/v1/account/password` | Cambiarla con sesión y contraseña actual |
 | POST `/v1/admin/player-accounts/<id>/password-reset` | Generar un código de soporte de un solo uso |
-| PUT `/v1/admin/cosmetics/catalog/<id>/avatar-package` | Validar y subir un personaje ZIP animado |
 
 ## Recuperación de cuentas
 
@@ -73,7 +72,11 @@ Creación de metadatos (`PUT .../catalog/capa-fundador`):
 {"name":"Capa fundador","slot":"CAPE","status":"draft","expectedRevision":0}
 ```
 
-Slots: `CAPE`, `HAT`, `WINGS`, `BACKPACK`, `PET`, `SKIN`. Estados: `draft`, `published`, `retired`.
+Slots: `CAPE`, `HAT`, `WINGS`, `BACKPACK`, `PET`. Estados: `draft`, `published`, `retired`.
+
+El sistema de personajes/skins 3D fue retirado. Los productos SKIN anteriores
+quedan retirados y fuera de catálogos, armarios, entregas y distribución de recursos.
+Los registros históricos y archivos se conservan para no destruir compras anteriores.
 Una actualización usa la revisión recibida; un conflicto devuelve 409.
 El slot es inmutable para evitar que un artículo vendido cambie de categoría.
 Cambiar nombre o estado no elimina las asignaciones existentes. Retirarlo sí
