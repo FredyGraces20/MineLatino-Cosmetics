@@ -1,6 +1,8 @@
 # Personajes animados MineLatino
 
-El mod usa un formato abierto basado en ZIP. No carga ni distribuye archivos `.ysm`.
+El mod usa un formato abierto basado en ZIP. Los modelos `.ysm` autorizados se
+convierten previamente con la herramienta local; el juego no necesita instalar YSM
+ni distribuye el contenedor original.
 El ZIP puede envolver los archivos en una carpeta y debe contener:
 
 - `main.json`: geometría Bedrock exportada por Blockbench (`minecraft:geometry`).
@@ -23,9 +25,16 @@ cliente repite límites equivalentes antes de guardar el archivo en caché.
 5. La tecla `B` abre la ruleta. El botón inferior permite capturar y guardar otra tecla.
 
 El render selecciona automáticamente `idle`, `walk`, `run`, `sneak`, `swim`,
-`elytra_fly`, `ride`, `sleep`, `death`, uso de objeto y ataque cuando esos clips
-existen. La ruleta prioriza clips `extra0`, `extra1`, etc. También se evalúa un
-subconjunto seguro de Molang para interpolación, trigonometría y movimiento de cabeza.
+`swim_stand`, `elytra_fly`, `ride`, `sleep`, `riptide`, `attacked`, `death`, uso de
+objeto y ataque cuando esos clips existen. La ruleta prioriza clips `extra0`,
+`extra1`, etc.
+
+La geometría aplica las mismas conversiones Bedrock que YSM/GeckoLib: jerarquía de
+huesos, pivotes, ejes, rotaciones, UV por cara, UV negativos, `uv_rotation`,
+`mirror` e `inflate`. Las animaciones admiten keyframes `pre`/`post`, interpolación
+lineal, escalonada, Catmull-Rom y easings comunes. El subconjunto seguro de Molang
+incluye movimiento de cabeza, velocidad, equipo, trigonometría, exponenciales y
+potencias.
 
 ## Límites actuales
 

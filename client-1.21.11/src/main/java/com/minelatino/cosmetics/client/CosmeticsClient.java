@@ -69,7 +69,7 @@ public final class CosmeticsClient {
                     CosmeticsConfig config = CosmeticsConfig.read(Minecraft.getInstance().gameDirectory.toPath());
                     Path cacheDir = Minecraft.getInstance().gameDirectory.toPath().resolve("cache").resolve("minelatino-cosmetics");
                     instance = new CosmeticsClient(config, cacheDir);
-                    CosmeticsDiagnostics.event("START","build=alpha.24 minecraft=1.21.11 java="+System.getProperty("java.version"));
+                    CosmeticsDiagnostics.event("START","build=alpha.25 minecraft=1.21.11 java="+System.getProperty("java.version"));
                     LOG.info("Cosmetics backend: {}", config.backendUrl());
                 }
             }
@@ -231,7 +231,7 @@ public final class CosmeticsClient {
         Session s=auth.session();
         String server=mc.player==null ? "none" : WardrobeController.normalize(mc.player.getUUID().toString());
         String owner=s==null ? "none" : WardrobeController.normalize(s.uuid());
-        String state="build=alpha.24 minecraft=1.21.11\naccountUuid="+mc.getUser().getProfileId()+
+        String state="build=alpha.25 minecraft=1.21.11\naccountUuid="+mc.getUser().getProfileId()+
                 "\nserverUuid="+server+"\nsessionUuid="+owner+"\nauth="+auth.state()+
                 "\nsessionValid="+auth.isConnected()+"\nwardrobe="+wardrobe.snapshot().phase()+
                 "\nowned="+wardrobe.snapshot().owned().size()+"\nconfirmed="+wardrobe.snapshot().equipped()+

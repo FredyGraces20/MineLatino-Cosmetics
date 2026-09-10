@@ -14,8 +14,9 @@ import java.util.Set;
 
 /** Validated Bedrock/Blockbench geometry used by MineLatino full-character skins. */
 public final class AvatarModel {
-    public record Face(float u, float v, float width, float height) {}
-    public record Cube(float[] origin, float[] size, float[] pivot, float[] rotation, Map<String, Face> faces) {}
+    public record Face(float u, float v, float width, float height, int rotation) {}
+    public record Cube(float[] origin, float[] size, float[] pivot, float[] rotation,
+                       float inflate, boolean mirror, boolean boxUv, Map<String, Face> faces) {}
     public record Bone(String name, String parent, float[] pivot, float[] rotation, List<Cube> cubes) {}
 
     private final List<Bone> roots;
@@ -51,13 +52,19 @@ public final class AvatarModel {
             if (!name.matches("[^\\p{Cntrl}]{1,128}") || !names.add(name)) throw new IllegalArgumentException("Invalid or duplicate bone name");
             String parent = raw.has("parent") ? raw.get("parent").getAsString() : null;
             float[] pivot = vector(raw.get("pivot"), new float[3]); float[] rotation = vector(raw.get("rotation"), new float[3]);
+            boolean boneMirror = bool(raw, "mirror", false);
+            float boneInflate = number(raw, "inflate", 0);
             List<Cube> cubes = new ArrayList<>();
             if (raw.has("cubes")) for (JsonElement cubeElement : raw.getAsJsonArray("cubes")) {
                 if (++cubeCount > 8192) throw new IllegalArgumentException("Too many avatar cubes");
                 JsonObject cube = cubeElement.getAsJsonObject();
                 float[] origin = vector(cube.get("origin"), null), size = vector(cube.get("size"), null);
                 float[] cubePivot = vector(cube.get("pivot"), pivot), cubeRotation = vector(cube.get("rotation"), new float[3]);
-                Map<String, Face> faces = faces(cube, origin, size); cubes.add(new Cube(origin, size, cubePivot, cubeRotation, faces));
+                boolean boxUv = cube.has("uv") && !cube.get("uv").isJsonObject();
+                boolean mirror = bool(cube, "mirror", boneMirror);
+                float inflate = number(cube, "inflate", boneInflate);
+                Map<String, Face> faces = faces(cube, size);
+                cubes.add(new Cube(origin, size, cubePivot, cubeRotation, inflate, mirror, boxUv, faces));
             }
             bones.add(new Bone(name, parent, pivot, rotation, List.copyOf(cubes)));
         }
@@ -77,20 +84,27 @@ public final class AvatarModel {
         path.remove(bone.name());
     }
 
-    private static Map<String, Face> faces(JsonObject cube, float[] origin, float[] size) {
+    private static Map<String, Face> faces(JsonObject cube, float[] size) {
         Map<String, Face> result = new HashMap<>();
         if (cube.has("uv") && cube.get("uv").isJsonObject()) {
             JsonObject uv = cube.getAsJsonObject("uv");
             for (String direction : List.of("north", "south", "east", "west", "up", "down")) if (uv.has(direction)) {
                 JsonObject face = uv.getAsJsonObject(direction); float[] at = vector2(face.get("uv"), null);
                 float[] span = vector2(face.get("uv_size"), defaultFaceSize(direction, size));
-                result.put(direction, new Face(at[0], at[1], span[0], span[1]));
+                int rotation = integer(face, "uv_rotation", 0);
+                if (rotation % 90 != 0) rotation = Math.round(rotation / 90f) * 90;
+                result.put(direction, new Face(at[0], at[1], span[0], span[1], Math.floorMod(rotation, 360)));
             }
         } else if (cube.has("uv")) {
             float[] at = vector2(cube.get("uv"), null); float x=size[0], y=size[1], z=size[2];
-            result.put("west", new Face(at[0], at[1]+z,z,y)); result.put("north",new Face(at[0]+z,at[1]+z,x,y));
-            result.put("east",new Face(at[0]+z+x,at[1]+z,z,y)); result.put("south",new Face(at[0]+z+x+z,at[1]+z,x,y));
-            result.put("up",new Face(at[0]+z,at[1],x,z)); result.put("down",new Face(at[0]+z+x,at[1],-x,z));
+            // Bedrock box-UV layout. WEST/EAST and DOWN are intentionally not
+            // symmetrical; this is the same atlas convention used by GeckoLib.
+            result.put("west", new Face(at[0]+z+x,at[1]+z,z,y,0));
+            result.put("east", new Face(at[0],at[1]+z,z,y,0));
+            result.put("north",new Face(at[0]+z,at[1]+z,x,y,0));
+            result.put("south",new Face(at[0]+z+x+z,at[1]+z,x,y,0));
+            result.put("up",new Face(at[0]+z,at[1],x,z,0));
+            result.put("down",new Face(at[0]+z+x,at[1]+z,x,-z,0));
         }
         if (result.isEmpty()) throw new IllegalArgumentException("Avatar cube has no UV faces"); return Map.copyOf(result);
     }
@@ -99,6 +113,12 @@ public final class AvatarModel {
         return switch (direction) { case "up", "down" -> new float[]{size[0], size[2]}; case "east", "west" -> new float[]{size[2], size[1]}; default -> new float[]{size[0], size[1]}; };
     }
     private static int integer(JsonObject object, String key, int fallback) { return object != null && object.has(key) ? object.get(key).getAsInt() : fallback; }
+    private static boolean bool(JsonObject object, String key, boolean fallback) { return object != null && object.has(key) ? object.get(key).getAsBoolean() : fallback; }
+    private static float number(JsonObject object, String key, float fallback) {
+        float value = object != null && object.has(key) ? object.get(key).getAsFloat() : fallback;
+        if (!Float.isFinite(value) || Math.abs(value) > 1024) throw new IllegalArgumentException("Invalid cube inflation");
+        return value;
+    }
     private static float[] vector(JsonElement raw, float[] fallback) {
         if (raw == null || raw.isJsonNull()) { if (fallback == null) throw new IllegalArgumentException("Missing vector"); return fallback.clone(); }
         JsonArray a = raw.getAsJsonArray(); if (a.size()!=3) throw new IllegalArgumentException("Vector must contain three values");

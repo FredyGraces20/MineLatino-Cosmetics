@@ -143,38 +143,58 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
         double seconds=AvatarEmoteState.seconds(state.id);
         if(clip==null){clip=movementClip(avatar.animations(),state);seconds=state.ageInTicks/20.0;}
         VertexConsumer consumer=buffers.getBuffer(RenderType.entityCutoutNoCull(resource.texture()));
+        boolean rightMain=state.mainArm==net.minecraft.world.entity.HumanoidArm.RIGHT;
+        AvatarAnimation.Context animationContext=new AvatarAnimation.Context(state.yRot,state.xRot,state.walkAnimationSpeed,0,
+                !state.getMainHandItem().isEmpty(),!(rightMain?state.leftHandItem:state.rightHandItem).isEmpty(),!state.headEquipment.isEmpty());
         stack.pushPose();try{
             // Bedrock/Gecko geometry uses pixels, Y-up and +Z forward. Mirror X and
             // Y to enter Minecraft's model space; flipping Z here turns the entire
             // avatar around and makes it face backwards relative to the player.
             stack.translate(0,1.5,0);stack.scale(-1,-1,1);
-            for(AvatarModel.Bone root:avatar.model().roots())renderAvatarBone(stack,consumer,light,avatar,root,clip,seconds,state.ageInTicks/20.0,state.yRot,state.xRot);
+            for(AvatarModel.Bone root:avatar.model().roots())renderAvatarBone(stack,consumer,light,avatar,root,clip,seconds,state.ageInTicks/20.0,animationContext);
         }finally{stack.popPose();}
     }
 
     private static String movementClip(AvatarAnimation animations,PlayerRenderState state){
-        for(String candidate:state.deathTime>0?List.of("death"):state.isUsingItem?List.of("use_mainhand","use_offhand"):state.attackTime>0?List.of("swing_hand"):state.isFallFlying?List.of("elytra_fly","fly"):state.isVisuallySwimming?List.of("swim"):state.isPassenger?List.of("ride","sit"):state.isCrouching?List.of(state.walkAnimationSpeed>.02f?"sneak":"sneaking"):state.walkAnimationSpeed>.75f?List.of("run","walk"):state.walkAnimationSpeed>.02f?List.of("walk","run"):List.of("idle"))
+        List<String> candidates;
+        if(state.deathTime>0)candidates=List.of("death");
+        else if(state.bedOrientation!=null)candidates=List.of("sleep");
+        else if(state.isAutoSpinAttack)candidates=List.of("riptide");
+        else if(state.hasRedOverlay)candidates=List.of("attacked");
+        else if(state.isUsingItem)candidates=state.useItemHand==net.minecraft.world.InteractionHand.OFF_HAND?List.of("use_offhand","use_mainhand"):List.of("use_mainhand","use_offhand");
+        else if(state.attackTime>0)candidates=List.of("swing_hand");
+        else if(state.isFallFlying)candidates=List.of("elytra_fly","fly");
+        else if(state.isVisuallySwimming)candidates=List.of("swim");
+        else if(state.isInWater)candidates=List.of("swim_stand","swim");
+        else if(state.isPassenger)candidates=List.of("ride","boat","sit");
+        else if(state.isCrouching)candidates=List.of(state.walkAnimationSpeed>.02f?"sneak":"sneaking");
+        else if(state.walkAnimationSpeed>.75f)candidates=List.of("run","walk");
+        else if(state.walkAnimationSpeed>.02f)candidates=List.of("walk","run");
+        else candidates=List.of("idle");
+        for(String candidate:candidates)
             for(String name:animations.names())if(name.equals(candidate)||name.endsWith("."+candidate))return name;
         return null;
     }
 
-    private static void renderAvatarBone(PoseStack stack,VertexConsumer consumer,int light,AvatarPackage avatar,AvatarModel.Bone bone,String clip,double seconds,double ambientSeconds,float headYaw,float headPitch){
-        AvatarAnimation.Pose animation=avatar.animations().sampleLayered(clip,bone.name(),seconds,ambientSeconds,headYaw,headPitch);
+    private static void renderAvatarBone(PoseStack stack,VertexConsumer consumer,int light,AvatarPackage avatar,AvatarModel.Bone bone,String clip,double seconds,double ambientSeconds,AvatarAnimation.Context context){
+        AvatarAnimation.Pose animation=avatar.animations().sampleLayered(clip,bone.name(),seconds,ambientSeconds,context);
         float[]p=bone.pivot(),r=bone.rotation(),ar=animation.rotation();stack.pushPose();try{
-            stack.translate((p[0]+animation.position()[0])/16.0,(p[1]+animation.position()[1])/16.0,(p[2]+animation.position()[2])/16.0);
-            stack.mulPose(new Quaternionf().rotationZYX((float)Math.toRadians(-(r[2]+ar[2])),(float)Math.toRadians(-(r[1]+ar[1])),(float)Math.toRadians(r[0]+ar[0])));
-            stack.scale(animation.scale()[0],animation.scale()[1],animation.scale()[2]);stack.translate(-p[0]/16.0,-p[1]/16.0,-p[2]/16.0);
+            // YSM/Gecko bake: translation(-X,+Y,+Z), pivot(-X,+Y,+Z),
+            // rotation(-X,-Y,+Z). Applying raw Blockbench values directly makes
+            // left/right bones cross over and rotates accessories inside-out.
+            stack.translate(-animation.position()[0]/16.0,animation.position()[1]/16.0,animation.position()[2]/16.0);
+            stack.translate(-p[0]/16.0,p[1]/16.0,p[2]/16.0);
+            stack.mulPose(new Quaternionf().rotationZYX((float)Math.toRadians(r[2]+ar[2]),(float)Math.toRadians(-(r[1]+ar[1])),(float)Math.toRadians(-(r[0]+ar[0]))));
+            stack.scale(animation.scale()[0],animation.scale()[1],animation.scale()[2]);stack.translate(p[0]/16.0,-p[1]/16.0,-p[2]/16.0);
             for(AvatarModel.Cube cube:bone.cubes())renderAvatarCube(stack,consumer,light,avatar.model(),cube);
-            for(AvatarModel.Bone child:avatar.model().children(bone.name()))renderAvatarBone(stack,consumer,light,avatar,child,clip,seconds,ambientSeconds,headYaw,headPitch);
+            for(AvatarModel.Bone child:avatar.model().children(bone.name()))renderAvatarBone(stack,consumer,light,avatar,child,clip,seconds,ambientSeconds,context);
         }finally{stack.popPose();}
     }
 
     private static void renderAvatarCube(PoseStack stack,VertexConsumer consumer,int light,AvatarModel model,AvatarModel.Cube cube){
-        stack.pushPose();try{float[]p=cube.pivot(),r=cube.rotation();stack.translate(p[0]/16.0,p[1]/16.0,p[2]/16.0);stack.mulPose(new Quaternionf().rotationZYX((float)Math.toRadians(-r[2]),(float)Math.toRadians(-r[1]),(float)Math.toRadians(r[0])));stack.translate(-p[0]/16.0,-p[1]/16.0,-p[2]/16.0);
-            float x1=cube.origin()[0]/16,y1=cube.origin()[1]/16,z1=cube.origin()[2]/16,x2=(cube.origin()[0]+cube.size()[0])/16,y2=(cube.origin()[1]+cube.size()[1])/16,z2=(cube.origin()[2]+cube.size()[2])/16;
-            for(var face:cube.faces().entrySet()){float[][]v=switch(face.getKey()){case"north"->new float[][]{{x2,y2,z1},{x2,y1,z1},{x1,y1,z1},{x1,y2,z1}};case"south"->new float[][]{{x1,y2,z2},{x1,y1,z2},{x2,y1,z2},{x2,y2,z2}};case"east"->new float[][]{{x2,y2,z2},{x2,y1,z2},{x2,y1,z1},{x2,y2,z1}};case"west"->new float[][]{{x1,y2,z1},{x1,y1,z1},{x1,y1,z2},{x1,y2,z2}};case"up"->new float[][]{{x1,y2,z1},{x1,y2,z2},{x2,y2,z2},{x2,y2,z1}};default->new float[][]{{x1,y1,z2},{x1,y1,z1},{x2,y1,z1},{x2,y1,z2}};};AvatarModel.Face uv=face.getValue();float u1=uv.u()/model.textureWidth(),v1=uv.v()/model.textureHeight(),u2=(uv.u()+uv.width())/model.textureWidth(),v2=(uv.v()+uv.height())/model.textureHeight();float[]n=normal(v);float[][]t={{v[0][0],v[0][1],v[0][2],u1,v1},{v[1][0],v[1][1],v[1][2],u1,v2},{v[2][0],v[2][1],v[2][2],u2,v2},{v[3][0],v[3][1],v[3][2],u2,v1}};PoseStack.Pose pose=stack.last();for(float[]vertex:t)addVertex(consumer,pose,vertex,light,n);}
+        stack.pushPose();try{float[]p=cube.pivot(),r=cube.rotation();stack.translate(-p[0]/16.0,p[1]/16.0,p[2]/16.0);stack.mulPose(new Quaternionf().rotationZYX((float)Math.toRadians(r[2]),(float)Math.toRadians(-r[1]),(float)Math.toRadians(-r[0])));stack.translate(p[0]/16.0,-p[1]/16.0,-p[2]/16.0);
+            PoseStack.Pose pose=stack.last();for(AvatarGeometry.Quad quad:AvatarGeometry.bake(model,cube))for(float[]vertex:quad.vertices())addVertex(consumer,pose,vertex,light,quad.normal());
         }finally{stack.popPose();}}
-    private static float[]normal(float[][]v){float ax=v[1][0]-v[0][0],ay=v[1][1]-v[0][1],az=v[1][2]-v[0][2],bx=v[2][0]-v[0][0],by=v[2][1]-v[0][1],bz=v[2][2]-v[0][2];float x=ay*bz-az*by,y=az*bx-ax*bz,z=ax*by-ay*bx,l=(float)Math.sqrt(x*x+y*y+z*z);return l==0?new float[]{0,1,0}:new float[]{x/l,y/l,z/l};}
 
     private static String formatUuid(String value) {
         String hex = value.replace("-", "");
