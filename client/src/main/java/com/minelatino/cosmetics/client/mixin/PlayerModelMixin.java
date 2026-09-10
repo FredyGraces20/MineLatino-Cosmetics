@@ -11,7 +11,16 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /** Replaces, rather than overlays, the vanilla player after the animated skin is ready. */
 @Mixin(PlayerModel.class)
 public abstract class PlayerModelMixin {
-    @Inject(method="setupAnim(Lnet/minecraft/client/renderer/entity/state/PlayerRenderState;)V",at=@At("TAIL"))
+    // Forge runs with Mojang names while Fabric runs with intermediary names.
+    // Keep both selectors and make this visual replacement fail-open: a future
+    // mapping change must never prevent Minecraft from reaching its title screen.
+    @Inject(
+        method={
+            "setupAnim(Lnet/minecraft/client/renderer/entity/state/PlayerRenderState;)V",
+            "method_62110(Lnet/minecraft/class_10055;)V"
+        },
+        at=@At("TAIL"), require=0, remap=false
+    )
     private void minelatino$toggleVanillaBody(PlayerRenderState state, CallbackInfo ci){
         ((PlayerModel)(Object)this).setAllVisible(!CosmeticRenderer.hasReadySkin(state));
     }
