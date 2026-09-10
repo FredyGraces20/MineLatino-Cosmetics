@@ -48,6 +48,13 @@ test('settlement is atomic, idempotent and grants ownership used by the mod', t 
   assert.equal(store.appearance(owner.uuid)[0].cosmeticId, 'pack');
 });
 
+test('products with order history must be retired instead of deleted', t => {
+  const { store, commerce } = fixture(t);
+  commerce.createOrder(owner, 'pack', 'manual', 'delete-protected-order');
+  assert.throws(() => store.deleteCosmetic('pack', 1, 'admin'), { status: 409 });
+  assert.equal(store.cosmetic('pack').name, 'Mochila');
+});
+
 test('pending legacy skin orders cannot deliver removed products', t => {
   const { store, commerce } = fixture(t);
   const order = commerce.createOrder(owner, 'pack', 'manual', 'legacy-skin-order-01');

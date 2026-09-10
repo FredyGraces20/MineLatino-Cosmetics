@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store, validateMenu, DEFAULT_MENU, offlineUuid } from '../src/store.mjs';
@@ -312,6 +312,7 @@ test('administrative reads and writes require admin authorization', async t => {
   for (const token of [undefined, 'wrong', await login()]) {
     assert.equal((await request('/v1/admin/cosmetics/catalog', { token })).status, 401);
     assert.equal((await request('/v1/admin/cosmetics/catalog/cape', { token, method: 'PUT', data: catalog })).status, 401);
+    assert.equal((await request('/v1/admin/cosmetics/catalog/cape', { token, method: 'DELETE', data: { expectedRevision: 1 } })).status, 401);
   }
 });
 test('catalog preserves ownership across edits and rejects stale revisions', async t => {
@@ -659,6 +660,40 @@ function fixtureWithResources(t, options = {}) {
   };
   return { store, api, request, resourceDir };
 }
+
+test('admin can permanently delete an unsold cosmetic and all associated data and files', async t => {
+  const { store, request, resourceDir } = fixtureWithResources(t);
+  const id = 'delete-pack';
+  store.saveCosmetic(id, { ...catalog, name: 'Mochila eliminable', slot: 'BACKPACK',
+    product: { description: 'Temporal', amountMinor: 500, currency: 'USD' } }, 'admin');
+  assert.equal((await request(`/v1/admin/cosmetics/catalog/${id}/files/texture`, {
+    method: 'PUT', token: ADMIN, headers: { 'X-Filename': 'texture.png' }, body: PNG_1x1,
+  })).status, 200);
+  assert.equal((await request(`/v1/admin/cosmetics/catalog/${id}/model`, {
+    method: 'PUT', token: ADMIN, headers: { 'X-Filename': 'model.json' }, body: Buffer.from('{"elements":[]}'),
+  })).status, 200);
+  store.saveTransform(id, 'backpack', { translation: [1, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] }, 'admin');
+  store.entitlement({ ...grant, cosmeticId: id, reference: 'delete-premium' }, true, 'admin');
+  store.equip(OWNER, 'BACKPACK', id);
+  store.createPlayerAccount({ accountId: OTHER, email: 'delete@example.com', nick: 'DeleteOwner',
+    passwordHash: 'a'.repeat(64), passwordSalt: 'b'.repeat(32) });
+  store.accountEntitlement({ accountId: OTHER, cosmeticId: id }, true, 'admin');
+  store.accountEquip(OTHER, 'BACKPACK', id);
+  const response = await request(`/v1/admin/cosmetics/catalog/${id}`, {
+    method: 'DELETE', token: ADMIN, data: { expectedRevision: 1 },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual({ premiumOwners: response.data.premiumOwners, accountOwners: response.data.accountOwners },
+    { premiumOwners: 1, accountOwners: 1 });
+  assert.throws(() => store.cosmetic(id), { status: 404 });
+  assert.equal(store.wardrobe(OWNER).owned.length, 0);
+  assert.equal(store.accountWardrobe(OTHER).owned.length, 0);
+  assert.equal(store.db.prepare('SELECT COUNT(*) count FROM cosmetic_products WHERE cosmetic_id=?').get(id).count, 0);
+  assert.deepEqual(store.db.prepare('PRAGMA foreign_key_check').all(), []);
+  assert.equal(existsSync(join(resourceDir, `${id}_texture.png`)), false);
+  assert.equal(existsSync(join(resourceDir, `${id}_model.json`)), false);
+  assert.equal(store.auditPage().some(entry => entry.action === 'catalog.delete'), true);
+});
 
 // Minimal valid PNG (1x1 transparent pixel)
 const PNG_1x1 = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6200010000000500010d0a2db40000000049454e44ae426082', 'hex');

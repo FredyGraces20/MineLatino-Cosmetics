@@ -447,6 +447,28 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
           }
           return json(store.saveCosmetic(id, input, actor));
         }
+        if (method === 'DELETE' && itemMatch) {
+          const id = cosmeticId(itemMatch[1]);
+          const input = await body(request);
+          const resource = store.getResource(id);
+          const files = store.getResourceFiles(id);
+          const animation = store.getPetAnimation(id);
+          const paths = new Set([resource?.file_path, resource?.model_path, resource?.avatar_path,
+            animation?.file_path, ...files.flatMap(file => [file.file_path, file.mcmeta_path])].filter(Boolean));
+          const result = store.deleteCosmetic(id, input.expectedRevision, actor);
+          if (resourceDir) {
+            for (const filePath of paths) {
+              if (basename(filePath) !== filePath) continue;
+              const absolute = join(resourceDir, filePath);
+              try {
+                if (existsSync(absolute)) unlinkSync(absolute);
+              } catch (error) {
+                console.warn(`[catalog.delete] No se pudo eliminar el archivo huérfano ${filePath}:`, error);
+              }
+            }
+          }
+          return json(result);
+        }
 
         // Resource upload (texture PNG)
         const resourceUploadMatch = path.match(/^\/v1\/admin\/cosmetics\/catalog\/([a-z0-9_-]+)\/resource$/);

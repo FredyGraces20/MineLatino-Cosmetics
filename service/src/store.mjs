@@ -241,6 +241,36 @@ export class Store {
       return this.cosmetic(id);
     });
   }
+  deleteCosmetic(id, expectedRevision, actor) {
+    id = cosmeticId(id);
+    requireThat(Number.isSafeInteger(expectedRevision) && expectedRevision >= 1, 'Revisión requerida');
+    return this.transaction(() => {
+      const item = this.db.prepare('SELECT * FROM cosmetics WHERE id=?').get(id);
+      requireThat(item && SLOTS.includes(item.slot), 'Cosmético no encontrado', 404);
+      requireThat(item.revision === expectedRevision, 'Otro administrador modificó este cosmético', 409);
+      const hasOrdersTable = !!this.db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='cosmetic_orders'").get();
+      if (hasOrdersTable) {
+        const orderCount = Number(this.db.prepare('SELECT COUNT(*) count FROM cosmetic_orders WHERE cosmetic_id=?').get(id).count);
+        requireThat(orderCount === 0, 'Este producto tiene órdenes registradas. Cámbialo a Retirado para conservar el historial de pagos.', 409);
+      }
+      const counts = {
+        premiumOwners: Number(this.db.prepare('SELECT COUNT(*) count FROM entitlements WHERE cosmetic_id=? AND active=1').get(id).count),
+        accountOwners: Number(this.db.prepare('SELECT COUNT(*) count FROM account_entitlements WHERE cosmetic_id=? AND active=1').get(id).count),
+      };
+      this.db.prepare('DELETE FROM equipment WHERE cosmetic_id=?').run(id);
+      this.db.prepare('DELETE FROM account_equipment WHERE cosmetic_id=?').run(id);
+      this.db.prepare('DELETE FROM entitlements WHERE cosmetic_id=?').run(id);
+      this.db.prepare('DELETE FROM account_entitlements WHERE cosmetic_id=?').run(id);
+      this.db.prepare('DELETE FROM pet_animations WHERE cosmetic_id=?').run(id);
+      this.db.prepare('DELETE FROM cosmetic_transforms WHERE cosmetic_id=?').run(id);
+      this.db.prepare('DELETE FROM resource_files WHERE cosmetic_id=?').run(id);
+      this.db.prepare('DELETE FROM resources WHERE cosmetic_id=?').run(id);
+      this.db.prepare('DELETE FROM cosmetic_products WHERE cosmetic_id=?').run(id);
+      this.db.prepare('DELETE FROM cosmetics WHERE id=?').run(id);
+      this.audit(actor, 'catalog.delete', { id, name: item.name, slot: item.slot, revision: item.revision, ...counts });
+      return { deleted: true, id, ...counts };
+    });
+  }
   entitlement(input, active, actor) {
     const owner = uuid(input.uuid), id = cosmeticId(input.cosmeticId);
     const reason = (input.reason && input.reason.trim()) ? text(input.reason, 240) : (active ? 'grant' : 'revoke');
