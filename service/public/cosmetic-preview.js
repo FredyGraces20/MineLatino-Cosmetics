@@ -29,7 +29,7 @@ var MineLatinoCosmetics = (() => {
   });
 
   // admin:three
-  var { BufferGeometry, Float32BufferAttribute, Vector3, Mesh, MeshStandardMaterial, NearestFilter, SRGBColorSpace, Texture } = globalThis.THREE;
+  var { BufferGeometry, DoubleSide, Float32BufferAttribute, Vector3, Mesh, MeshStandardMaterial, NearestFilter, SRGBColorSpace, Texture } = globalThis.THREE;
 
   // xmcl-keystone-ui/src/util/cosmeticGeometry.ts
   function textureName(model, reference = "") {
@@ -75,9 +75,11 @@ var MineLatinoCosmetics = (() => {
         groups.push({ start: positions.length / 3, count: 6, materialIndex: names.indexOf(name) });
         const rect = face.uv ?? defaults[direction], turn = face.rotation ?? 0;
         if (!vector(rect, 4) || ![0, 90, 180, 270].includes(turn)) throw new Error("UV inv\xE1lidas");
-        const vertices = corners.map((c) => {
+        const explicit = e.minelatino_vertices?.[direction];
+        if (explicit !== void 0 && (!Array.isArray(explicit) || explicit.length !== 4 || !explicit.every((vertex) => vector(vertex, 3)))) throw new Error("V\xE9rtices expl\xEDcitos inv\xE1lidos");
+        const vertices = (explicit ?? corners).map((c) => {
           const p = new Vector3(c[0], c[1], c[2]), r = e.rotation;
-          if (r) {
+          if (r && explicit === void 0) {
             if (!["x", "y", "z"].includes(r.axis) || !vector(r.origin, 3) || !Number.isFinite(r.angle)) throw new Error("Rotaci\xF3n inv\xE1lida");
             const origin = new Vector3(...r.origin), angle = r.angle * Math.PI / 180;
             p.sub(origin).applyAxisAngle(new Vector3(r.axis === "x" ? 1 : 0, r.axis === "y" ? 1 : 0, r.axis === "z" ? 1 : 0), angle);
@@ -91,8 +93,6 @@ var MineLatinoCosmetics = (() => {
         for (const i of [0, 1, 2, 0, 2, 3]) {
           positions.push(...vertices[i].toArray());
           const index = (i + turn / 90) % 4;
-          // Minecraft Java model UVs use a virtual 16x16 grid. texture_size only
-          // describes the source image resolution and does not rescale face UVs.
           uv.push(rect[index < 2 ? 0 : 2] / 16, 1 - rect[index === 0 || index === 3 ? 1 : 3] / 16);
         }
       }
@@ -152,6 +152,7 @@ var MineLatinoCosmetics = (() => {
       if (names.length > 32) throw new Error("Demasiadas texturas");
       const base = resourceUrl(product);
       const response = await fetch(`${base}&type=manifest`, { credentials: "omit", ...resourceOptions, signal });
+      if (!response.ok) throw new Error(`No se pudo obtener el manifiesto de texturas (${response.status})`);
       let files = [];
       try {
         files = (await response.json()).files;
@@ -190,7 +191,7 @@ var MineLatinoCosmetics = (() => {
         texture.generateMipmaps = false;
         texture.needsUpdate = true;
         texture.addEventListener("dispose", () => bitmap.close());
-        const material = new MeshStandardMaterial({ map: texture, alphaTest: 0.1, roughness: 1 });
+        const material = new MeshStandardMaterial({ map: texture, alphaTest: 0.1, roughness: 1, side: DoubleSide });
         materials.push(material);
         updates.push(() => {
           const frame = animation.frame(performance.now() / 50);

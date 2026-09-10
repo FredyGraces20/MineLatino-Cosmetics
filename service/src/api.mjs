@@ -3,9 +3,11 @@ import { PlayerAuth } from './auth.mjs';
 import { createHash, randomBytes, pbkdf2Sync } from 'node:crypto';
 import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs';
 import { join, extname, basename } from 'node:path';
+import { convertBbmodel } from './bbmodel.mjs';
 
 const ALLOWED_EXTENSIONS = new Set(['.png', '.json']);
 const MAX_RESOURCE_SIZE = 2 * 1024 * 1024; // 2 MB
+const MAX_BBMODEL_SIZE = 16 * 1024 * 1024; // embedded textures make editable projects larger
 
 async function body(request) {
   requireThat(request.headers.get('content-type')?.split(';')[0].trim() === 'application/json', 'Se requiere application/json', 415);
@@ -498,33 +500,73 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
           return json(resource);
         }
 
-        // Model upload (JSON)
+        // Model upload (Minecraft Java JSON or editable Blockbench project)
         const modelUploadMatch = path.match(/^\/v1\/admin\/cosmetics\/catalog\/([a-z0-9_-]+)\/model$/);
         if (method === 'PUT' && modelUploadMatch) {
           requireThat(resourceDir, 'Recursos no disponibles', 503);
           const id = cosmeticId(modelUploadMatch[1]);
-          store.cosmetic(id); // verify exists
+          const cosmetic = store.cosmetic(id); // verify exists
           const filename = request.headers.get('x-filename') || 'model.json';
-          const buffer = await binaryBody(request, MAX_RESOURCE_SIZE);
-          const ext = validateResourceFile(buffer, filename);
-          requireThat(ext === '.json', 'El modelo debe ser un archivo JSON', 415);
-          const modelSha256 = createHash('sha256').update(buffer).digest('hex');
-          const modelPath = `${id}_model${ext}`;
+          const safe = basename(filename), sourceExt = extname(filename).toLowerCase();
+          requireThat(safe === filename && !safe.includes('..') && !safe.includes('/') && !safe.includes('\\'), 'Nombre de archivo inválido');
+          requireThat(sourceExt === '.json' || sourceExt === '.bbmodel', 'El modelo debe ser JSON Java o .bbmodel', 415);
+          requireThat(sourceExt !== '.bbmodel' || cosmetic.slot === 'PET', 'Los proyectos .bbmodel se admiten en mascotas', 409);
+          const sourceBuffer = await binaryBody(request, sourceExt === '.bbmodel' ? MAX_BBMODEL_SIZE : MAX_RESOURCE_SIZE);
+          requireThat(sourceBuffer.length > 0, 'Archivo vacío');
+          let modelBuffer = sourceBuffer, converted = null;
+          if (sourceExt === '.bbmodel') {
+            converted = convertBbmodel(sourceBuffer);
+            modelBuffer = Buffer.from(JSON.stringify(converted.model));
+            requireThat(modelBuffer.length <= 8 * 1024 * 1024, 'El modelo convertido supera el máximo de 8 MB', 413);
+            for (const texture of converted.textures) {
+              if (texture.buffer) validateResourceFile(texture.buffer, `${texture.name}.png`);
+            }
+          } else {
+            validateResourceFile(sourceBuffer, filename);
+          }
+          const modelSha256 = createHash('sha256').update(modelBuffer).digest('hex');
+          const modelPath = `${id}_model.json`;
           // Delete old model file if replacing
           const old = store.getResource(id);
           if (old?.model_path) {
             const oldModelPath = join(resourceDir, old.model_path);
             if (existsSync(oldModelPath)) unlinkSync(oldModelPath);
           }
-          writeFileSync(join(resourceDir, modelPath), buffer);
+          writeFileSync(join(resourceDir, modelPath), modelBuffer);
           // Ensure resource row exists (create minimal one if not)
           const existing = store.getResource(id);
           if (!existing) {
             store.saveResource(id, '', '', 0, 'image/png');
           }
-          const resource = store.saveResourceModel(id, modelPath, modelSha256, buffer.length);
-          store.audit(actor, 'resource.upload', { cosmeticId: id, type: 'model', sha256: modelSha256, fileSize: buffer.length });
-          return json(resource);
+          const importedTextures = [];
+          if (converted) {
+            for (const texture of converted.textures) {
+              if (!texture.buffer) continue;
+              const sha256 = createHash('sha256').update(texture.buffer).digest('hex');
+              const filePath = `${id}_${texture.name}.png`;
+              const previous = store.getResourceFile(id, texture.name);
+              if (previous?.file_path && previous.file_path !== filePath) {
+                const previousPath = join(resourceDir, previous.file_path);
+                if (existsSync(previousPath)) unlinkSync(previousPath);
+              }
+              writeFileSync(join(resourceDir, filePath), texture.buffer);
+              store.saveResourceFile(id, texture.name, filePath, sha256, texture.buffer.length);
+              if (texture.name === 'texture') store.saveResource(id, filePath, sha256, texture.buffer.length, 'image/png');
+              importedTextures.push(texture.name);
+            }
+            if (converted.animation) {
+              const animationBuffer = Buffer.from(JSON.stringify(converted.animation.data));
+              const animationPath = `${id}_animation.json`;
+              const animationSha256 = createHash('sha256').update(animationBuffer).digest('hex');
+              writeFileSync(join(resourceDir, animationPath), animationBuffer);
+              store.savePetAnimation(id, converted.animation.selected, animationPath, animationSha256, animationBuffer.length, actor);
+            }
+          }
+          const resource = store.saveResourceModel(id, modelPath, modelSha256, modelBuffer.length);
+          store.audit(actor, 'resource.upload', { cosmeticId: id, type: 'model', sourceFormat: sourceExt.slice(1),
+            sha256: modelSha256, fileSize: modelBuffer.length, importedTextures, importedAnimation: !!converted?.animation });
+          return json({ ...resource, converted: sourceExt === '.bbmodel', importedTextures,
+            importedAnimation: converted?.animation?.selected || null });
         }
 
         // Resource delete (texture)

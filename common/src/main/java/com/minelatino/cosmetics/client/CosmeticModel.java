@@ -50,6 +50,7 @@ public final class CosmeticModel {
             }
             List<ModelFace> faces = new ArrayList<>();
             JsonObject faceObjects = obj.getAsJsonObject("faces");
+            JsonObject explicitVertices = obj.has("minelatino_vertices") ? obj.getAsJsonObject("minelatino_vertices") : null;
             if (faceObjects == null) throw new IllegalArgumentException("Missing faces");
             for (String direction : List.of("north", "south", "east", "west", "up", "down")) {
                 if (!faceObjects.has(direction)) continue;
@@ -67,7 +68,9 @@ public final class CosmeticModel {
                 }
                 String texture = reference.substring(reference.lastIndexOf('/') + 1).replaceFirst("\\.png$", "");
                 if (!texture.isEmpty() && !texture.matches("[a-z0-9_]{1,32}")) throw new IllegalArgumentException("Invalid texture name");
-                faces.add(new ModelFace(direction, vector(f, "uv", defaultUv(direction, from, to), 4), turn, texture));
+                float[][] vertices = explicitVertices != null && explicitVertices.has(direction)
+                        ? vertices(explicitVertices.getAsJsonArray(direction), direction) : null;
+                faces.add(new ModelFace(direction, vector(f, "uv", defaultUv(direction, from, to), 4), turn, texture, vertices));
             }
             elements.add(new ModelElement(from, to, rotation, List.copyOf(faces)));
         }
@@ -119,6 +122,18 @@ public final class CosmeticModel {
         };
     }
 
+    private static float[][] vertices(JsonArray array, String direction) {
+        if (array == null || array.size() != 4) throw new IllegalArgumentException("Invalid explicit vertices for " + direction);
+        float[][] result = new float[4][];
+        for (int i = 0; i < 4; i++) {
+            if (!array.get(i).isJsonArray()) throw new IllegalArgumentException("Invalid explicit vertex for " + direction);
+            JsonObject wrapper = new JsonObject();
+            wrapper.add("value", array.get(i));
+            result[i] = vector(wrapper, "value", null, 3);
+        }
+        return result;
+    }
+
     public record DisplayTransform(float[] translation, float[] rotation, float[] scale) {
         public static DisplayTransform identity() {
             return new DisplayTransform(new float[3], new float[3], new float[]{1, 1, 1});
@@ -126,7 +141,7 @@ public final class CosmeticModel {
     }
     public record ModelElement(float[] from, float[] to, Rotation rotation, List<ModelFace> faces) {}
     public record Rotation(float[] origin, float angle, String axis, boolean rescale) {}
-    public record ModelFace(String direction, float[] uv, int rotation, String texture) {}
+    public record ModelFace(String direction, float[] uv, int rotation, String texture, float[][] vertices) {}
     public record Quad(float[] v0, float[] v1, float[] v2, float[] v3, float[] normal, String texture) {}
 
     public static List<Quad> generateQuads(ModelElement e, float ox, float oy, float oz, int texW, int texH) {
@@ -135,7 +150,7 @@ public final class CosmeticModel {
         List<Quad> result = new ArrayList<>();
         for (ModelFace face : e.faces()) {
             // Vanilla FaceInfo order: top-left, bottom-left, bottom-right, top-right.
-            float[][] positions = switch (face.direction()) {
+            float[][] positions = face.vertices() != null ? face.vertices() : switch (face.direction()) {
                 case "north" -> new float[][]{{x2,y2,z1},{x2,y1,z1},{x1,y1,z1},{x1,y2,z1}};
                 case "south" -> new float[][]{{x1,y2,z2},{x1,y1,z2},{x2,y1,z2},{x2,y2,z2}};
                 case "east" -> new float[][]{{x2,y2,z2},{x2,y1,z2},{x2,y1,z1},{x2,y2,z1}};
@@ -146,8 +161,8 @@ public final class CosmeticModel {
             };
             float[][] vertices = new float[4][];
             for (int i=0; i<4; i++) {
-                float[] p = positions[i];
-                rotate(p, e.rotation());
+                float[] p = positions[i].clone();
+                if (face.vertices() == null) rotate(p, e.rotation());
                 int uvIndex = (i + face.rotation()/90) % 4;
                 // Java model UVs are in 16-unit coordinates; texture_size is editor metadata.
                 float u = face.uv()[uvIndex < 2 ? 0 : 2] / 16;

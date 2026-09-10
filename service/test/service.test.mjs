@@ -709,6 +709,41 @@ test('admin can permanently delete an unsold cosmetic and all associated data an
 // Minimal valid PNG (1x1 transparent pixel)
 const PNG_1x1 = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6200010000000500010d0a2db40000000049454e44ae426082', 'hex');
 
+test('pet bbmodel upload converts geometry and imports its embedded assets', async t => {
+  const { store, request } = fixtureWithResources(t);
+  store.saveCosmetic('bb-pet', { ...catalog, name: 'Mascota BBMODEL', slot: 'PET' }, 'admin');
+  const bbmodel = Buffer.from(JSON.stringify({
+    meta: { format_version: '4.5', model_format: 'free' }, resolution: { width: 16, height: 16 },
+    textures: [{ name: 'pet.png', id: '0', source: `data:image/png;base64,${PNG_1x1.toString('base64')}` }],
+    elements: [{ type: 'cube', uuid: 'cube', from: [0,0,0], to: [1,1,1], faces: { north: { uv: [0,0,16,16], texture: 0 } } }],
+    outliner: [{ name: 'body', origin: [0,0,0], children: ['cube'] }],
+    animations: [{ name: 'idle', loop: 'loop', length: 1, animators: { body: { name: 'body', type: 'bone', keyframes: [
+      { channel: 'position', time: 0, data_points: [{ x: 0, y: 0, z: 0 }] },
+    ] } } }],
+  }));
+  const uploaded = await request('/v1/admin/cosmetics/catalog/bb-pet/model', {
+    method: 'PUT', token: ADMIN, headers: { 'X-Filename': 'pet.bbmodel' }, body: bbmodel,
+  });
+  assert.equal(uploaded.status, 200);
+  assert.equal(uploaded.data.converted, true);
+  assert.deepEqual(uploaded.data.importedTextures, ['texture']);
+  assert.equal(uploaded.data.importedAnimation, 'idle');
+  const model = await request('/v1/resources/bb-pet?type=model');
+  assert.equal(model.data.source_format, 'bbmodel');
+  assert.equal(model.data.elements[0].faces.north.texture, '#texture');
+  assert.equal((await request('/v1/resources/bb-pet?file=texture')).status, 200);
+  assert.equal((await request('/v1/resources/bb-pet?type=animation-config')).data.animation, 'idle');
+});
+
+test('bbmodel upload is limited to pets', async t => {
+  const { store, request } = fixtureWithResources(t);
+  store.saveCosmetic('bb-hat', { ...catalog, name: 'Sombrero', slot: 'HAT' }, 'admin');
+  const response = await request('/v1/admin/cosmetics/catalog/bb-hat/model', {
+    method: 'PUT', token: ADMIN, headers: { 'X-Filename': 'hat.bbmodel' }, body: Buffer.from('{}'),
+  });
+  assert.equal(response.status, 409);
+});
+
 test('replacing named primary texture preserves new file and exposes manifest', async t => {
   const { store, request } = fixtureWithResources(t);
   store.saveCosmetic('test-cape', catalog, 'admin');

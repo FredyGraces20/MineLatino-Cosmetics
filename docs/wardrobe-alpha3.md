@@ -31,7 +31,7 @@ Abrir ESC → Cosméticos MineLatino. El menú usa carbón, ámbar, paneles redo
 | BACKPACK | Mochila | Anclaje al torso, detrás del jugador. |
 | PET | Mascota | Acompañante visual a un lado, con oscilación suave. No es una entidad con IA ni una mascota del servidor. |
 
-Se admite un cosmético por categoría. Los modelos de mochila, alas y mascota deben exportarse alrededor del centro `[8,8,8]` en unidades de Minecraft (16 por bloque); la mascota se escala a 0.55. La colocación artística final necesita una prueba visual con cada modelo. Continúa el soporte de un PNG y geometría `elements` de Minecraft Java; no se implementan animaciones GeckoLib, archivos `.bbmodel` ni múltiples texturas independientes.
+Se admite un cosmético por categoría. Los JSON de mochila y alas deben exportarse alrededor del centro `[8,8,8]` en unidades de Minecraft (16 por bloque); la mascota se escala a 0.55. Para mascotas también puede subirse el `.bbmodel` editable: el servicio lo convierte al contrato distribuible, conserva las rotaciones de su jerarquía e importa sus texturas incrustadas y clips numéricos. La colocación artística final necesita una prueba visual con cada modelo. La animación del runtime mueve actualmente el modelo completo usando el canal raíz, sin deformación independiente de cada hueso.
 
 ## Actualización del servicio
 

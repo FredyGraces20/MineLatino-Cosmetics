@@ -82,6 +82,8 @@ test('redesigned admin separates catalog, product data and 3D resources', () => 
   assert(html.includes("method:'DELETE',body:JSON.stringify({expectedRevision:item.revision})"));
   assert(html.includes('function normalizeCosmeticId(value)'));
   assert(html.includes("slot:$('cos-slot').value"));
+  assert(html.includes('id="model-file" accept=".json,.bbmodel"'));
+  assert(html.includes('BBMODEL convertido'));
 });
 
 test('admin assignments use MineLatino accounts instead of legacy Minecraft UUID grants', () => {

@@ -4,7 +4,7 @@
 
 - Ruta `/minelatino/cosmeticos`, junto a Jugar, Anuncios, Actualizaciones y Tienda.
 - Catálogo publicado paginado, búsqueda y categorías. Las tarjetas muestran la textura real; al abrirlas se usa un visor 3D con la skin de la cuenta seleccionada. Solo un visor activo para limitar consumo de GPU.
-- Vista Java JSON de una textura (mismo formato que el mod), UVs, rotaciones y `display.head`. Capas/alas sin JSON usan el visor de capa/elytra. No se admite directamente `.bbmodel`, modelos animados o múltiples texturas.
+- Vista del contrato compartido con el mod: JSON Java, múltiples texturas, UVs, rotaciones y vértices convertidos desde jerarquías `.bbmodel`. En mascotas el panel importa directamente el proyecto `.bbmodel`, sus PNG incrustados y sus clips; capas/alas sin modelo usan el visor de capa/elytra.
 - Nombre, descripción, precio y moneda editables en el panel administrativo. Precio vacío significa no disponible; no equivale a gratuito. Las monedas admitidas utilizan dos decimales.
 - El esquema de productos es una tabla adicional: no borra cosméticos, propietarios ni equipamiento existentes. Clientes antiguos conservan la descripción/precio cuando no envían `product`.
 - `commerce.mjs`: base de pedidos persistentes, idempotencia, importe/moneda definidos por el servidor y entrega transaccional a `entitlements`, que ya consulta el mod. No se expone una ruta pública para marcar pagos aprobados.

@@ -28,7 +28,7 @@ No se ha validado visualmente esta versión con dos clientes conectados al servi
 
 ## Límites que siguen vigentes
 
-- Formato: elementos/cubos de Minecraft Java exportados desde Blockbench con una textura PNG. No es un cargador de `.bbmodel`, GeckoLib, animaciones de huesos ni modelos con varias texturas independientes.
+- Formato: elementos/cubos de Minecraft Java o un proyecto `.bbmodel` importado desde el panel para mascotas. El importador resuelve jerarquías, rotaciones, UVs y varias texturas PNG incrustadas; también convierte los clips numéricos al archivo de animación de mascota. El runtime actual reproduce el canal raíz (`root`, `body` o `pet`) sobre el modelo completo, no deformación independiente de cada hueso.
 - `display.head` corresponde al slot HAT. CAPE/WINGS mantienen anclaje al cuerpo; requieren modelos diseñados para ese anclaje y ajuste visual.
 - Un cosmético sin PNG subido no se puede dibujar. En el diagnóstico previo, `pruebascv` no tenía recurso: debe subirse desde el panel.
 - El UUID entregado por el servidor de Minecraft debe coincidir con el UUID propietario en la API. En un servidor offline que cambie UUID, hace falta resolver la identidad de forma verificada; no se asignan cosméticos por coincidencia insegura de nick.

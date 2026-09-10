@@ -110,4 +110,20 @@ class CosmeticModelTest {
         assertEquals(16, model.textureWidth);
         assertEquals(16, model.textureHeight);
     }
+
+    @Test void convertedBbmodelUsesExplicitVertices() {
+        String json="{\"textures\":{\"texture\":\"minelatino/texture\"},\"elements\":[{\"from\":[0,0,0],\"to\":[2,2,2],"
+                + "\"faces\":{\"north\":{\"uv\":[0,0,16,16],\"texture\":\"#texture\"}},"
+                + "\"minelatino_vertices\":{\"north\":[[-2,2,0],[0,2,0],[0,0,0],[-2,0,0]]}}]}";
+        var q=CosmeticModel.parse(json).quads.getFirst();
+        assertArrayEquals(new float[]{-.625f,-.375f,-.5f}, java.util.Arrays.copyOf(q.v0(),3), .00001f);
+        assertArrayEquals(new float[]{0,0,-1},q.normal(),.00001f);
+        assertEquals("texture",q.texture());
+    }
+
+    @Test void malformedExplicitVerticesAreRejected() {
+        String json="{\"elements\":[{\"from\":[0,0,0],\"to\":[1,1,1],\"faces\":{\"north\":{}},"
+                + "\"minelatino_vertices\":{\"north\":[[0,0,0]]}}]}";
+        assertThrows(IllegalArgumentException.class,()->CosmeticModel.parse(json));
+    }
 }
