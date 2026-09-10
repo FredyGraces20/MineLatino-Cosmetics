@@ -6,7 +6,7 @@ plugins {
 }
 
 group = 'com.minelatino.cosmetics'
-version = '0.1.0-alpha.19'
+version = '0.1.0-alpha.20'
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 tasks.withType(JavaCompile).configureEach {
