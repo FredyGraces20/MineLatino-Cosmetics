@@ -89,7 +89,10 @@ if (-not $SkipGithub) {
         }
     }
     $manifest = @(@{ id = 'minelatino-cosmetics'; name = 'MineLatino Cosmetics'; versions = @($versions) })
-    $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $repoRoot 'mods.json') -Encoding utf8
+    # -InputObject preserves the outer array even when it contains only one mod.
+    # Piping a one-item PowerShell array unwraps it into an object, which makes
+    # the launcher backend reject the otherwise valid manifest.
+    ConvertTo-Json -InputObject $manifest -Depth 6 | Set-Content -LiteralPath (Join-Path $repoRoot 'mods.json') -Encoding utf8
     Write-Host 'Release published and mods.json generated. Commit it only after reviewing the release.' -ForegroundColor Green
 }
 
