@@ -277,6 +277,12 @@ td code { color: #9cabbc; font-family: ui-monospace, SFMono-Regular, Consolas, m
 
 /* 3D editor keeps the same behavior with a cleaner shell */
 .ed-overlay { background: #080b12; }
+
+.recovery-overlay { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 24px; background: rgba(3, 6, 12, .82); backdrop-filter: blur(14px); }
+.recovery-card { width: min(520px, 100%); padding: 26px; border: 1px solid rgba(83, 223, 237, .28); border-radius: 20px; background: #141821; box-shadow: 0 24px 80px rgba(0, 0, 0, .5); }
+.recovery-card h2 { margin: 0 0 8px; color: var(--tx); }
+.recovery-code { display: block; margin: 20px 0 10px; padding: 18px; border: 1px solid rgba(83, 223, 237, .25); border-radius: 14px; background: #090d14; color: var(--ac); font: 700 24px/1.2 ui-monospace, monospace; letter-spacing: .16em; text-align: center; user-select: all; }
+.recovery-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
 .ed-header { min-height: 62px; padding: 10px 18px; border: 0; border-bottom: 1px solid var(--bd); background: rgba(12,17,26,.95); }
 .ed-header h2 { color: var(--tx); font-size: 14px; letter-spacing: -.01em; text-transform: none; }
 .ed-header .ed-close { min-height: 36px; padding: 6px 12px; border-color: var(--bd); border-radius: 9px; color: #a8b3c1; }

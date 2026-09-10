@@ -44,6 +44,22 @@ administrativos, permisos de archivos, copias verificadas y operación multiinst
 | PUT `/v1/admin/pause-menu` | Publicar una revisión de menú |
 | GET `/v1/admin/pause-menu/history?offset=0` | Historial de configuración |
 | POST `/v1/admin/pause-menu/restore` | Recuperar una revisión publicando una nueva |
+| POST `/v1/account/password/forgot` | Solicitar un código sin revelar si el correo existe |
+| POST `/v1/account/password/reset` | Consumir el código y definir una contraseña nueva |
+| PUT `/v1/account/password` | Cambiarla con sesión y contraseña actual |
+| POST `/v1/admin/player-accounts/<id>/password-reset` | Generar un código de soporte de un solo uso |
+
+## Recuperación de cuentas
+
+Los códigos tienen 12 caracteres, caducan a los 15 minutos, se guardan únicamente
+como SHA-256 y dejan de funcionar después del primer uso. Al cambiar la contraseña
+se cierran todas las sesiones del launcher y del mod. La respuesta pública de
+solicitud es idéntica exista o no el correo para evitar enumerar cuentas.
+
+Configura `COSMETICS_RESEND_API_KEY` y `COSMETICS_EMAIL_FROM` para enviar el código
+por correo mediante Resend. Sin esas variables, el administrador puede buscar la
+cuenta en el panel, pulsar **Recuperar acceso** y entregar el código al propietario
+después de verificarlo por el canal de soporte habitual.
 
 Los listados avanzan sumando el número de resultados a `offset`; una página con
 menos de 50 resultados es la última. No se expone información de compradores en

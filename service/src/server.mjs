@@ -7,6 +7,7 @@ import { createHttpServer } from './http.mjs';
 import { AdminAuth } from './adminAuth.mjs';
 import { AccountAuth } from './accountAuth.mjs';
 import { Commerce } from './commerce.mjs';
+import { createPasswordRecoveryFromEnv } from './recovery.mjs';
 
 const port = Number(process.env.PORT ?? 8787);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('PORT inválido');
@@ -20,7 +21,7 @@ mkdirSync(resourceDir, { recursive: true });
 const store = new Store(dbPath);
 const origin = process.env.COSMETICS_ORIGIN || `http://127.0.0.1:${port}`;
 const adminAuth = new AdminAuth({ store, bootstrapToken: adminToken });
-const accountAuth = new AccountAuth({ store });
+const accountAuth = new AccountAuth({ store, recovery: createPasswordRecoveryFromEnv() });
 const commerce = new Commerce(store);
 const publicDir = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'public');
 // Premium is secure-by-default. Setting the flag to false can temporarily stop

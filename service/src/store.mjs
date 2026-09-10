@@ -76,10 +76,12 @@ export class Store {
       CREATE TABLE IF NOT EXISTS pet_animations(cosmetic_id TEXT PRIMARY KEY REFERENCES cosmetics(id), animation_name TEXT NOT NULL, file_path TEXT, sha256 TEXT, file_size INTEGER, updated_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS player_accounts(account_id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE COLLATE NOCASE, nick TEXT NOT NULL, password_hash TEXT NOT NULL, password_salt TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','suspended','deleted')), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER);
       CREATE TABLE IF NOT EXISTS account_sessions(token_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES player_accounts(account_id) ON DELETE CASCADE, scope TEXT NOT NULL CHECK(scope IN ('account','game')), expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS password_reset_tokens(token_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES player_accounts(account_id) ON DELETE CASCADE, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL, consumed_at INTEGER);
       CREATE TABLE IF NOT EXISTS account_entitlements(account_id TEXT NOT NULL REFERENCES player_accounts(account_id) ON DELETE CASCADE, cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id), active INTEGER NOT NULL CHECK(active IN (0,1)), PRIMARY KEY(account_id,cosmetic_id));
       CREATE TABLE IF NOT EXISTS account_equipment(account_id TEXT NOT NULL REFERENCES player_accounts(account_id) ON DELETE CASCADE, slot TEXT NOT NULL, cosmetic_id TEXT NOT NULL, PRIMARY KEY(account_id,slot), FOREIGN KEY(account_id,cosmetic_id) REFERENCES account_entitlements(account_id,cosmetic_id));
       CREATE TABLE IF NOT EXISTS account_presence(account_id TEXT PRIMARY KEY REFERENCES player_accounts(account_id) ON DELETE CASCADE, profile_uuid TEXT NOT NULL, name TEXT NOT NULL, updated_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS player_accounts_nick ON player_accounts(nick COLLATE NOCASE);
+      CREATE INDEX IF NOT EXISTS password_reset_account ON password_reset_tokens(account_id,expires_at);
       CREATE INDEX IF NOT EXISTS account_presence_identity ON account_presence(name COLLATE NOCASE,profile_uuid,updated_at);
       CREATE INDEX IF NOT EXISTS account_entitlement_owners ON account_entitlements(cosmetic_id,active,account_id);
       `);
@@ -361,6 +363,33 @@ export class Store {
   touchAccountSession(tokenHash, now) { this.db.prepare('UPDATE account_sessions SET last_used_at=? WHERE token_hash=?').run(now, tokenHash); }
   deleteAccountSession(tokenHash) { this.db.prepare('DELETE FROM account_sessions WHERE token_hash=?').run(tokenHash); }
   deleteAccountSessions(accountId) { this.db.prepare('DELETE FROM account_sessions WHERE account_id=?').run(accountId); }
+
+  createPasswordReset(accountId, tokenHash, expiresAt, actor = 'system', now = Date.now()) {
+    requireThat(this.accountById(accountId, true), 'Cuenta no encontrada', 404);
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM password_reset_tokens WHERE expires_at<=? OR account_id=?').run(now, accountId);
+      this.db.prepare('INSERT INTO password_reset_tokens(token_hash,account_id,expires_at,created_at) VALUES(?,?,?,?)')
+        .run(tokenHash, accountId, expiresAt, now);
+      this.audit(actor, 'player-account.password-reset.issue', { accountId, expiresAt });
+    });
+  }
+
+  consumePasswordReset(email, tokenHash, credentials, now = Date.now()) {
+    return this.transaction(() => {
+      const row = this.db.prepare(`SELECT r.*,a.email,a.status FROM password_reset_tokens r
+        JOIN player_accounts a ON a.account_id=r.account_id
+        WHERE r.token_hash=? AND a.email=? COLLATE NOCASE AND a.status='active'
+          AND r.consumed_at IS NULL AND r.expires_at>?`).get(tokenHash, email, now);
+      requireThat(row, 'Código de recuperación inválido o caducado', 400);
+      this.db.prepare('UPDATE password_reset_tokens SET consumed_at=? WHERE token_hash=? AND consumed_at IS NULL').run(now, tokenHash);
+      this.db.prepare('UPDATE player_accounts SET password_hash=?,password_salt=?,updated_at=? WHERE account_id=?')
+        .run(credentials.passwordHash, credentials.passwordSalt, now, row.account_id);
+      this.deleteAccountSessions(row.account_id);
+      this.db.prepare('DELETE FROM password_reset_tokens WHERE account_id=? AND token_hash<>?').run(row.account_id, tokenHash);
+      this.audit(`account:${row.account_id}`, 'player-account.password-reset.consume', { accountId: row.account_id });
+      return this.accountById(row.account_id);
+    });
+  }
 
   accountEntitlement(input, active, actor) {
     const accountId = input.accountId, id = cosmeticId(input.cosmeticId);

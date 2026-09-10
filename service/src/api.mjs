@@ -109,7 +109,7 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
       const authorization = request.headers.get('authorization');
 
       // ── MineLatino accounts (premium and offline players) ──────────────
-      if (method === 'POST' && ['/v1/account/register', '/v1/account/login'].includes(path)) {
+      if (method === 'POST' && ['/v1/account/register', '/v1/account/login', '/v1/account/password/forgot', '/v1/account/password/reset'].includes(path)) {
         const authBucket = accountAuthRates.get(remoteAddress) ?? { count: 0, until: time + 60_000 };
         authBucket.count++; accountAuthRates.set(remoteAddress, authBucket);
         requireThat(authBucket.count <= 20, 'Demasiados intentos de acceso; espera un minuto', 429);
@@ -121,6 +121,15 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
       if (method === 'POST' && path === '/v1/account/login') {
         requireThat(accountAuth, 'Cuentas MineLatino no configuradas', 503);
         return json(accountAuth.login(await body(request)));
+      }
+      if (method === 'POST' && path === '/v1/account/password/forgot') {
+        requireThat(accountAuth, 'Cuentas MineLatino no configuradas', 503);
+        return json(await accountAuth.requestPasswordReset(await body(request)), 202);
+      }
+      if (method === 'POST' && path === '/v1/account/password/reset') {
+        requireThat(accountAuth, 'Cuentas MineLatino no configuradas', 503);
+        accountAuth.resetPassword(await body(request));
+        return json({ ok: true });
       }
       if (path.startsWith('/v1/account/')) {
         requireThat(accountAuth, 'Cuentas MineLatino no configuradas', 503);
@@ -151,7 +160,7 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
         }
         if (method === 'PUT' && path === '/v1/account/password') {
           requireThat(identity.session.scope === 'account', 'Permiso de sesión insuficiente', 403);
-          accountAuth.updatePassword(accountId, (await body(request)).password); return json({ ok: true });
+          accountAuth.updatePassword(accountId, await body(request)); return json({ ok: true });
         }
         if (method === 'POST' && path === '/v1/account/game-token') return json(accountAuth.gameToken(authorization), 201);
         if (method === 'POST' && path === '/v1/account/presence') {
@@ -354,6 +363,13 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
         }
         if (playerAccountMatch && method === 'DELETE') {
           return json({ account: store.deletePlayerAccount(playerAccountMatch[1], actor) });
+        }
+        const playerPasswordResetMatch = path.match(/^\/v1\/admin\/player-accounts\/([a-f0-9]{32})\/password-reset$/);
+        if (playerPasswordResetMatch && method === 'POST') {
+          requireThat(accountAuth, 'Cuentas MineLatino no configuradas', 503);
+          const account = store.accountById(playerPasswordResetMatch[1], true);
+          requireThat(account?.status === 'active', 'La cuenta no está activa', 409);
+          return json(accountAuth.issuePasswordReset(playerPasswordResetMatch[1], actor), 201);
         }
         const accountGrantMatch = path.match(/^\/v1\/admin\/player-accounts\/([a-f0-9]{32})\/cosmetics$/);
         if (accountGrantMatch && ['POST','DELETE'].includes(method)) {

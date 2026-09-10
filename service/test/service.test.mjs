@@ -111,7 +111,7 @@ function fixture(t, options = {}) {
   const store = new Store(); t.after(() => store.close());
   const auth = new PlayerAuth({ verify: async () => ({ uuid: OWNER, name: 'TestPlayer' }) });
   const adminAuth = new AdminAuth({ store, bootstrapToken: ADMIN });
-  const accountAuth = new AccountAuth({ store });
+  const accountAuth = new AccountAuth({ store, recovery: options.recovery, now: options.now });
   const api = createApi({ store, adminToken: ADMIN, adminAuth, accountAuth, playerAuth: auth, premiumEnabled: true, ...options });
   const request = async (path, { method = 'GET', data, token, headers = {} } = {}) => {
     const response = await api(new Request(`http://127.0.0.1:8787${path}`, { method,
@@ -182,6 +182,67 @@ test('player accounts can update themselves and administrators can suspend or de
   assert.equal((await request('/v1/account/me', { token: registered.data.token })).status, 401);
   const deleted = await request(`/v1/admin/player-accounts/${accountId}`, { method: 'DELETE', token: ADMIN });
   assert.equal(deleted.data.account.status, 'deleted');
+});
+
+test('password recovery uses an expiring one-time code without revealing unknown emails', async t => {
+  const delivered = [];
+  const recovery = { enabled: true, async send(message) { delivered.push(message); } };
+  const { request } = fixture(t, { recovery });
+  const registered = await request('/v1/account/register', { method: 'POST', data: {
+    email: 'recover@example.com', password: 'old-password-123', nick: 'RecoverMe',
+  }});
+  const unknown = await request('/v1/account/password/forgot', { method: 'POST', data: { email: 'missing@example.com' } });
+  const requested = await request('/v1/account/password/forgot', { method: 'POST', data: { email: 'recover@example.com' } });
+  assert.equal(unknown.status, 202); assert.deepEqual(unknown.data, requested.data);
+  assert.equal(requested.data.delivery, 'email'); assert.equal(delivered.length, 1);
+  const reset = await request('/v1/account/password/reset', { method: 'POST', data: {
+    email: 'recover@example.com', code: delivered[0].code, password: 'new-password-456',
+  }});
+  assert.equal(reset.status, 200);
+  assert.equal((await request('/v1/account/me', { token: registered.data.token })).status, 401);
+  assert.equal((await request('/v1/account/login', { method: 'POST', data: {
+    email: 'recover@example.com', password: 'old-password-123',
+  }})).status, 401);
+  assert.equal((await request('/v1/account/login', { method: 'POST', data: {
+    email: 'recover@example.com', password: 'new-password-456',
+  }})).status, 200);
+  assert.equal((await request('/v1/account/password/reset', { method: 'POST', data: {
+    email: 'recover@example.com', code: delivered[0].code, password: 'third-password-789',
+  }})).status, 400);
+});
+
+test('signed-in password change verifies the old password and revokes every session', async t => {
+  const { request } = fixture(t);
+  const registered = await request('/v1/account/register', { method: 'POST', data: {
+    email: 'change@example.com', password: 'current-password-123', nick: 'ChangeMe',
+  }});
+  assert.equal((await request('/v1/account/password', { method: 'PUT', token: registered.data.token, data: {
+    currentPassword: 'incorrect-password', password: 'next-password-456',
+  }})).status, 401);
+  assert.equal((await request('/v1/account/password', { method: 'PUT', token: registered.data.token, data: {
+    currentPassword: 'current-password-123', password: 'next-password-456',
+  }})).status, 200);
+  assert.equal((await request('/v1/account/me', { token: registered.data.token })).status, 401);
+  assert.equal((await request('/v1/account/login', { method: 'POST', data: {
+    email: 'change@example.com', password: 'next-password-456',
+  }})).status, 200);
+});
+
+test('administrator can generate a recovery code but cannot read or set the password', async t => {
+  const { request } = fixture(t);
+  const registered = await request('/v1/account/register', { method: 'POST', data: {
+    email: 'assisted@example.com', password: 'initial-password-123', nick: 'Assisted',
+  }});
+  const issued = await request(`/v1/admin/player-accounts/${registered.data.account.accountId}/password-reset`, {
+    method: 'POST', token: ADMIN, data: {},
+  });
+  assert.equal(issued.status, 201); assert.match(issued.data.code, /^[A-Z2-9]{4}(?:-[A-Z2-9]{4}){2}$/);
+  assert.equal((await request('/v1/account/password/reset', { method: 'POST', data: {
+    email: 'assisted@example.com', code: issued.data.code, password: 'assisted-password-456',
+  }})).status, 200);
+  assert.equal((await request('/v1/account/login', { method: 'POST', data: {
+    email: 'assisted@example.com', password: 'assisted-password-456',
+  }})).status, 200);
 });
 
 test('administrative reads and writes require admin authorization', async t => {

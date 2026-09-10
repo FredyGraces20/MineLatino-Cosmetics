@@ -3,7 +3,9 @@ import { ApiError, requireThat } from './store.mjs';
 
 const SESSION_TTL = 30 * 24 * 60 * 60 * 1000;
 const GAME_TTL = 24 * 60 * 60 * 1000;
+const RESET_TTL = 15 * 60 * 1000;
 const tokenHash = token => createHash('sha256').update(token).digest('hex');
+const RESET_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 function email(value) {
   requireThat(typeof value === 'string' && value.length <= 254, 'Correo inválido');
@@ -26,8 +28,21 @@ function derivePassword(value, salt) {
   return scryptSync(value, Buffer.from(salt, 'hex'), 32, { N: 16384, r: 8, p: 1 }).toString('hex');
 }
 
+function resetCode(value) {
+  requireThat(typeof value === 'string', 'Código de recuperación inválido o caducado');
+  const normalized = value.replaceAll('-', '').replaceAll(' ', '').toUpperCase();
+  requireThat(new RegExp(`^[${RESET_ALPHABET}]{12}$`).test(normalized), 'Código de recuperación inválido o caducado');
+  return normalized;
+}
+
+function newResetCode() {
+  const bytes = randomBytes(12);
+  const raw = Array.from(bytes, value => RESET_ALPHABET[value & 31]).join('');
+  return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8)}`;
+}
+
 export class AccountAuth {
-  constructor({ store, now = Date.now } = {}) { this.store = store; this.now = now; }
+  constructor({ store, now = Date.now, recovery } = {}) { this.store = store; this.now = now; this.recovery = recovery; }
 
   register(input) {
     const normalizedEmail = email(input.email), playerNick = nick(input.nick), secret = password(input.password);
@@ -49,6 +64,13 @@ export class AccountAuth {
     const expected = Buffer.from(row.password_hash, 'hex');
     requireThat(candidate.length === expected.length && timingSafeEqual(candidate, expected), 'Correo o contraseña incorrectos', 401);
     return { account: this.store.publicPlayerAccount(row), ...this.issue(row.account_id, 'account', SESSION_TTL) };
+  }
+
+  verifyPassword(row, value) {
+    const secret = password(value);
+    const candidate = Buffer.from(derivePassword(secret, row.password_salt), 'hex');
+    const expected = Buffer.from(row.password_hash, 'hex');
+    return candidate.length === expected.length && timingSafeEqual(candidate, expected);
   }
 
   issue(accountId, scope, ttl = GAME_TTL) {
@@ -78,9 +100,41 @@ export class AccountAuth {
     return this.issue(account.account_id, 'game', GAME_TTL);
   }
 
-  updatePassword(accountId, value) {
-    const secret = password(value), salt = randomBytes(16).toString('hex');
+  updatePassword(accountId, input) {
+    const row = this.store.accountById(accountId, true);
+    requireThat(row && this.verifyPassword(row, input.currentPassword), 'La contraseña actual es incorrecta', 401);
+    const secret = password(input.password);
+    requireThat(input.currentPassword !== secret, 'La contraseña nueva debe ser diferente');
+    const salt = randomBytes(16).toString('hex');
     this.store.updatePlayerAccount(accountId, { passwordHash: derivePassword(secret, salt), passwordSalt: salt });
     this.store.deleteAccountSessions(accountId);
+  }
+
+  issuePasswordReset(accountId, actor = 'system') {
+    const code = newResetCode(), expiresAt = this.now() + RESET_TTL;
+    this.store.createPasswordReset(accountId, tokenHash(resetCode(code)), expiresAt, actor, this.now());
+    return { code, expiresAt };
+  }
+
+  async requestPasswordReset(input) {
+    const normalizedEmail = email(input.email);
+    const row = this.store.accountByEmail(normalizedEmail, true);
+    const delivery = this.recovery?.enabled ? 'email' : 'support';
+    if (row?.status === 'active') {
+      const reset = this.issuePasswordReset(row.account_id);
+      if (this.recovery?.enabled) {
+        try { await this.recovery.send({ email: normalizedEmail, nick: row.nick, ...reset }); }
+        catch (error) { console.error(`[password-reset] delivery failed: ${error instanceof Error ? error.message : 'unknown error'}`); }
+      }
+    }
+    return { ok: true, delivery };
+  }
+
+  resetPassword(input) {
+    const normalizedEmail = email(input.email), code = resetCode(input.code), secret = password(input.password);
+    const salt = randomBytes(16).toString('hex');
+    return this.store.consumePasswordReset(normalizedEmail, tokenHash(code), {
+      passwordHash: derivePassword(secret, salt), passwordSalt: salt,
+    }, this.now());
   }
 }
