@@ -8,36 +8,36 @@
         "minecraftVersions": ["1.21.4"],
         "loader": "fabric",
         "downloadUrl": "https://github.com/FredyGraces20/MineLatino-Cosmetics/releases/download/v0.1.0-alpha.25/minelatino-cosmetics-fabric-1.21.4-0.1.0-alpha.25.jar",
-        "sha1": "56cbe6ab96b112ef4c14ee78b1fc824d8d9296d9",
+        "sha1": "c815f5cf8ba0ddaadb25c29a0e33c4288c65e1a6",
         "fileName": "minelatino-cosmetics-fabric-1.21.4-0.1.0-alpha.25.jar",
-        "fileSize": 197965
+        "fileSize": 206475
       },
       {
         "modVersion": "0.1.0-alpha.25",
         "minecraftVersions": ["1.21.4"],
         "loader": "forge",
         "downloadUrl": "https://github.com/FredyGraces20/MineLatino-Cosmetics/releases/download/v0.1.0-alpha.25/minelatino-cosmetics-forge-1.21.4-0.1.0-alpha.25.jar",
-        "sha1": "3d98de9de05f63313ea89ba6b259f0df2b43c392",
+        "sha1": "8bfd71e18694480975290eaf2bcbcf54c9c8fb69",
         "fileName": "minelatino-cosmetics-forge-1.21.4-0.1.0-alpha.25.jar",
-        "fileSize": 198706
+        "fileSize": 207167
       },
       {
         "modVersion": "0.1.0-alpha.25",
         "minecraftVersions": ["1.21.11"],
         "loader": "fabric",
         "downloadUrl": "https://github.com/FredyGraces20/MineLatino-Cosmetics/releases/download/v0.1.0-alpha.25/minelatino-cosmetics-fabric-1.21.11-0.1.0-alpha.25.jar",
-        "sha1": "8ac8924ac716c4018d756d090152c6e34dd21206",
+        "sha1": "e039be5c0ca8ff6c743fb9dfe48cde8b97b0be4f",
         "fileName": "minelatino-cosmetics-fabric-1.21.11-0.1.0-alpha.25.jar",
-        "fileSize": 198531
+        "fileSize": 206887
       },
       {
         "modVersion": "0.1.0-alpha.25",
         "minecraftVersions": ["1.21.11"],
         "loader": "forge",
         "downloadUrl": "https://github.com/FredyGraces20/MineLatino-Cosmetics/releases/download/v0.1.0-alpha.25/minelatino-cosmetics-forge-1.21.11-0.1.0-alpha.25.jar",
-        "sha1": "59e7d2e7e15494cae2879ae1dfd1caeeeea25941",
+        "sha1": "e3bf735ba4926bf34d02c7d9a0a6add5a151ed73",
         "fileName": "minelatino-cosmetics-forge-1.21.11-0.1.0-alpha.25.jar",
-        "fileSize": 198766
+        "fileSize": 207121
       }
     ]
   }
