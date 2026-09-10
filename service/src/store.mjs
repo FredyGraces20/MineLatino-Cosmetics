@@ -102,6 +102,7 @@ export class Store {
     if (!columns.includes('avatar_size')) this.db.prepare('ALTER TABLE resources ADD COLUMN avatar_size INTEGER').run();
     this.migrateCosmeticSlots();
     this.migrateCosmeticTransforms();
+    this.migrateLegacyAccountEntitlements();
     this.repairInvalidPublishedCosmetics();
   }
   repairInvalidPublishedCosmetics() {
@@ -169,6 +170,20 @@ export class Store {
         this.db.exec('PRAGMA user_version=8');
       });
     } finally { this.db.exec('PRAGMA foreign_keys=ON'); }
+  }
+  migrateLegacyAccountEntitlements() {
+    if (this.db.prepare('PRAGMA user_version').get().user_version >= 9) return;
+    this.transaction(() => {
+      // A previous admin screen accepted any 32-hex value as a Minecraft UUID.
+      // If that value is an existing MineLatino account ID, preserve the intended
+      // delivery in the account inventory. Never overwrite an account-native row.
+      const migrated = this.db.prepare(`INSERT INTO account_entitlements(account_id,cosmetic_id,active)
+        SELECT a.account_id,e.cosmetic_id,e.active FROM entitlements e
+        JOIN player_accounts a ON a.account_id=e.uuid
+        ON CONFLICT(account_id,cosmetic_id) DO NOTHING`).run();
+      this.db.exec('PRAGMA user_version=9');
+      if (Number(migrated.changes) > 0) this.audit('system', 'account-entitlement.migrate-legacy', { count: Number(migrated.changes) });
+    });
   }
   close() { this.db.close(); }
   transaction(work) {
@@ -403,6 +418,13 @@ export class Store {
     if (!active) this.db.prepare('DELETE FROM account_equipment WHERE account_id=? AND cosmetic_id=?').run(accountId, id);
     this.audit(actor, active ? 'account-entitlement.grant' : 'account-entitlement.revoke', { accountId, cosmeticId: id });
     return { active };
+  }
+
+  accountOwners(id, offset = 0) {
+    id = cosmeticId(id); this.cosmetic(id);
+    return this.db.prepare(`SELECT a.account_id AS accountId,a.email,a.nick,a.status,a.created_at AS createdAt
+      FROM account_entitlements e JOIN player_accounts a ON a.account_id=e.account_id
+      WHERE e.cosmetic_id=? AND e.active=1 ORDER BY lower(a.nick),a.account_id LIMIT 50 OFFSET ?`).all(id, offset);
   }
 
   accountAppearance(accountId) {

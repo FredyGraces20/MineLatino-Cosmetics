@@ -64,7 +64,7 @@ test('v4 slot migration preserves ownership and equipment and is idempotent', t 
   try {
     assert.equal(store.cosmetic('pet').slot, 'PET');
     assert.equal(store.appearance(OWNER)[0].cosmeticId, 'cape');
-    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 8);
+    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 9);
     assert.equal(store.db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
   } finally { store.close(); }
 });
@@ -104,7 +104,7 @@ test('legacy head/backpack transforms migrate to each cosmetic catalog type', t 
   try {
     assert.deepEqual(store.getTransforms('pet').pet.translation, [1, 2, 3]);
     assert.deepEqual(store.getTransforms('cape').cape.scale, [2, 2, 2]);
-    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 8);
+    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 9);
   } finally { store.close(); }
 });
 function fixture(t, options = {}) {
@@ -142,6 +142,38 @@ test('MineLatino accounts support duplicate nicks without sharing cosmetics', as
   store.accountEntitlement({ accountId: first.data.account.accountId, cosmeticId: 'cape' }, true, 'test');
   assert.equal((await request('/v1/account/wardrobe', { token: first.data.token })).data.owned.length, 1);
   assert.equal((await request('/v1/account/wardrobe', { token: second.data.token })).data.owned.length, 0);
+});
+
+test('admin account assignments list the owners consumed by the launcher and mod', async t => {
+  const { store, request } = fixture(t);
+  store.saveCosmetic('cape', catalog, 'admin');
+  const registered = await request('/v1/account/register', { method: 'POST', data: {
+    email: 'owner@example.com', password: 'correct-horse-owner', nick: 'AccountOwner',
+  }});
+  const accountId = registered.data.account.accountId;
+  assert.equal((await request(`/v1/admin/player-accounts/${accountId}/cosmetics`, {
+    method: 'POST', token: ADMIN, data: { cosmeticId: 'cape' },
+  })).status, 200);
+  const owners = await request('/v1/admin/account-cosmetics/owners/cape', { token: ADMIN });
+  assert.deepEqual(owners.data.items.map(({ accountId: id, nick }) => ({ id, nick })), [{ id: accountId, nick: 'AccountOwner' }]);
+  assert.equal((await request('/v1/account/wardrobe', { token: registered.data.token })).data.owned[0].id, 'cape');
+});
+
+test('v9 migrates legacy grants accidentally addressed to a MineLatino account ID', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'minelatino-account-grant-migration-'));
+  const path = join(directory, 'state.sqlite'); let store;
+  t.after(() => { store?.close(); rmSync(directory, { recursive: true }); });
+  store = new Store(path);
+  store.createPlayerAccount({ accountId: OWNER, email: 'migrate@example.com', nick: 'MigratedOwner', passwordHash: 'a'.repeat(64), passwordSalt: 'b'.repeat(32) });
+  store.saveCosmetic('cape', catalog, 'admin');
+  store.entitlement({ ...grant, uuid: OWNER }, true, 'old-panel');
+  store.db.exec('PRAGMA user_version=8'); store.close();
+  store = new Store(path);
+  assert.equal(store.accountWardrobe(OWNER).owned[0].id, 'cape');
+  assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 9);
+  store.accountEntitlement({ accountId: OWNER, cosmeticId: 'cape' }, false, 'admin');
+  store.close(); store = new Store(path);
+  assert.equal(store.accountWardrobe(OWNER).owned.length, 0, 'migration must not regrant after an account-native revoke');
 });
 
 test('game token equips and publishes account cosmetics for offline identities', async t => {

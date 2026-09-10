@@ -80,6 +80,14 @@ test('redesigned admin separates catalog, product data and 3D resources', () => 
   assert(html.includes('edUseModelDefaults()'), 'editor must offer the model display transform as a preset');
 });
 
+test('admin assignments use MineLatino accounts instead of legacy Minecraft UUID grants', () => {
+  const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+  assert(html.includes('/v1/admin/player-accounts/${accountId}/cosmetics'));
+  assert(html.includes('/v1/admin/account-cosmetics/owners/${id}'));
+  assert(!html.includes("api('/v1/admin/cosmetics/grants'"));
+  assert(!html.includes('id="grant-uuid"'));
+});
+
 test('editor converts API transforms exactly like the Minecraft renderer', () => {
   const api = editor();
   const source = { translation: [8, 16, -4], rotation: [15, 30, -45], scale: [2, 1.5, .75] };

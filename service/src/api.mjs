@@ -467,6 +467,10 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
           const input = await body(request);
           return json(store.accountEntitlement({ accountId: accountGrantMatch[1], cosmeticId: input.cosmeticId }, method === 'POST', actor));
         }
+        const accountOwnersMatch = path.match(/^\/v1\/admin\/account-cosmetics\/owners\/([a-z0-9_-]+)$/);
+        if (accountOwnersMatch && method === 'GET') {
+          return json({ items: store.accountOwners(accountOwnersMatch[1], offset(url)) });
+        }
 
         // Orders and manual fulfillment. The operator must verify the payment
         // outside this panel and record its real, unique reference here.
