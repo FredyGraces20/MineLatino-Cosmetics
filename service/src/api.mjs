@@ -438,7 +438,10 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
           });
           return json({ items, nextOffset: items.length === 50 ? start + 50 : null });
         }
-        const itemMatch = path.match(/^\/v1\/admin\/cosmetics\/catalog\/([a-z0-9_-]+)$/);
+        // Match the segment first and validate it below. Keeping validation out of
+        // the route regexp makes malformed IDs return a useful 400 instead of the
+        // misleading generic "Ruta no encontrada" response.
+        const itemMatch = path.match(/^\/v1\/admin\/cosmetics\/catalog\/([^/]{1,128})$/);
         if (method === 'PUT' && itemMatch) {
           const id = cosmeticId(itemMatch[1]);
           const input = await body(request);

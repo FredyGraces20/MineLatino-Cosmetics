@@ -80,6 +80,8 @@ test('redesigned admin separates catalog, product data and 3D resources', () => 
   assert(html.includes('edUseModelDefaults()'), 'editor must offer the model display transform as a preset');
   assert(html.includes('id="delete-cosmetic-btn"'));
   assert(html.includes("method:'DELETE',body:JSON.stringify({expectedRevision:item.revision})"));
+  assert(html.includes('function normalizeCosmeticId(value)'));
+  assert(html.includes("slot:$('cos-slot').value"));
 });
 
 test('admin assignments use MineLatino accounts instead of legacy Minecraft UUID grants', () => {

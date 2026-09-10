@@ -326,6 +326,17 @@ test('catalog preserves ownership across edits and rejects stale revisions', asy
   assert.equal((await request('/v1/admin/cosmetics/catalog/cape', { token: ADMIN, method: 'PUT', data: draft })).status, 409);
   assert.equal(store.auditPage().length, 3);
 });
+test('admin API creates pets and reports invalid IDs instead of a missing route', async t => {
+  const { request } = fixture(t);
+  const pet = await request('/v1/admin/cosmetics/catalog/mascota-dragon', { token: ADMIN, method: 'PUT',
+    data: { name: 'Mascota Dragón', slot: 'PET', status: 'draft', expectedRevision: 0 } });
+  assert.equal(pet.status, 200);
+  assert.equal(pet.data.slot, 'PET');
+  const invalid = await request('/v1/admin/cosmetics/catalog/Mascota%20Drag%C3%B3n', { token: ADMIN, method: 'PUT',
+    data: { name: 'Mascota inválida', slot: 'PET', status: 'draft', expectedRevision: 0 } });
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.data.error, 'ID de cosmético inválido');
+});
 test('duplicate operation references cannot regrant a revoked item', t => {
   const { store } = fixture(t); store.saveCosmetic('cape', catalog, 'admin');
   assert.equal(store.entitlement(grant, true, 'admin').duplicate, false);
