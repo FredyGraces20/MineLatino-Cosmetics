@@ -1,117 +1,103 @@
-# deploy.ps1 — Build, GitHub Release, update mods.json → launcher auto-sync
-# Usage: .\deploy.ps1 [-SkipBuild] [-SkipGithub]
-param([switch]$SkipBuild, [switch]$SkipGithub)
+# Build and optionally publish every supported MineLatino Cosmetics artifact.
+# mods.json is changed only after GitHub confirms that the release exists.
+param(
+    [string]$Version = '0.1.0-alpha.19',
+    [string[]]$MinecraftVersions = @('1.21.4', '1.21.11'),
+    [switch]$SkipBuild,
+    [switch]$SkipGithub,
+    [string]$LocalInstanceMods = ''
+)
 
 $ErrorActionPreference = 'Stop'
-$root = $PSScriptRoot
-$version = '0.1.0-alpha.15'
-$mcVersion = '1.21.4'
+$repoRoot = $PSScriptRoot
 $repo = 'FredyGraces20/MineLatino-Cosmetics'
-$tag = "v$version"
+$tag = "v$Version"
+$javaHome = 'C:\Users\fredy\AppData\Roaming\.minecraft\runtime\java-runtime-delta\windows\java-runtime-delta'
 
-# ── 1. Build ──────────────────────────────────────────────────────────────
-if (-not $SkipBuild) {
-    Write-Host "`n== Building JARs ==" -ForegroundColor Cyan
-    $env:JAVA_HOME = 'C:\Program Files\Java\jdk-21.0.10'
-    $initScript = "$root\tools\isolated-test-output.gradle"
-    & "$root\gradlew.bat" ":fabric:build" ":forge:build" "--init-script" $initScript
-    if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+if (-not (Test-Path -LiteralPath (Join-Path $javaHome 'bin\java.exe'))) {
+    throw "Java 21 was not found at $javaHome"
+}
+$env:JAVA_HOME = $javaHome
+$env:Path = "$(Join-Path $javaHome 'bin');$env:Path"
+
+$artifacts = @()
+foreach ($mcVersion in $MinecraftVersions) {
+    if (-not $SkipBuild) {
+        Write-Host "Building Fabric $mcVersion" -ForegroundColor Cyan
+        & (Join-Path $repoRoot 'gradlew.bat') ':fabric:build' "-PmcVersion=$mcVersion" '--no-daemon'
+        if ($LASTEXITCODE -ne 0) { throw "Fabric $mcVersion build failed" }
+
+        Write-Host "Building Forge $mcVersion" -ForegroundColor Cyan
+        & (Join-Path $repoRoot 'forge\gradlew.bat') '-p' (Join-Path $repoRoot 'forge') 'build' "-PmcVersion=$mcVersion" '--no-daemon'
+        if ($LASTEXITCODE -ne 0) { throw "Forge $mcVersion build failed" }
+    }
+
+    foreach ($loader in @('fabric', 'forge')) {
+        $jarName = "minelatino-cosmetics-$loader-$mcVersion-$Version.jar"
+        $jarPath = if ($loader -eq 'fabric') {
+            Join-Path $repoRoot "build\$mcVersion\fabric\libs\$jarName"
+        } else {
+            Join-Path $repoRoot "forge\build\$mcVersion\libs\$jarName"
+        }
+        if (-not (Test-Path -LiteralPath $jarPath -PathType Leaf)) { throw "Artifact not found: $jarPath" }
+        $file = Get-Item -LiteralPath $jarPath
+        $artifacts += [pscustomobject]@{
+            MinecraftVersion = $mcVersion
+            Loader = $loader
+            File = $file
+            Sha1 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA1).Hash.ToLowerInvariant()
+        }
+        Write-Host "$loader ${mcVersion}: $($file.Name) ($($file.Length) bytes)" -ForegroundColor Green
+    }
 }
 
-# ── 2. Locate JARs ────────────────────────────────────────────────────────
-$buildBase = Get-ChildItem "C:\temp\cosmetics-build-*" -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if (-not $buildBase) {
-    $buildBase = Get-Item "$root\fabric\build"
-}
-$fabricJar = Get-ChildItem "$($buildBase.FullName)" -Recurse -Filter "minelatino-cosmetics-fabric-$mcVersion-$version.jar" | Select-Object -First 1
-$forgeJar  = Get-ChildItem "$($buildBase.FullName)" -Recurse -Filter "minelatino-cosmetics-forge-$mcVersion-$version.jar" | Select-Object -First 1
-if (-not $fabricJar) {
-    $fabricJar = Get-Item "$root\fabric\build\libs\minelatino-cosmetics-fabric-$mcVersion-$version.jar" -ErrorAction SilentlyContinue
-}
-if (-not $forgeJar) {
-    $forgeJar = Get-Item "$root\forge\build\libs\minelatino-cosmetics-forge-$mcVersion-$version.jar" -ErrorAction SilentlyContinue
-}
-if (-not $fabricJar) { throw "Fabric JAR not found" }
-Write-Host "Fabric: $($fabricJar.FullName) ($($fabricJar.Length) bytes)" -ForegroundColor Green
-if ($forgeJar) { Write-Host "Forge:  $($forgeJar.FullName) ($($forgeJar.Length) bytes)" -ForegroundColor Green }
-
-# ── 3. GitHub Release ─────────────────────────────────────────────────────
 if (-not $SkipGithub) {
-    Write-Host "`n== Creating GitHub Release $tag ==" -ForegroundColor Cyan
-    # Delete existing release if any
-    $existing = gh release view $tag --repo $repo 2>$null
+    gh release view $tag --repo $repo *> $null
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "Deleting existing release $tag..." -ForegroundColor Yellow
-        gh release delete $tag --repo $repo --yes --cleanup-tag
+        throw "Release $tag already exists. Refusing to replace an immutable published version."
     }
-    # Create release
-    $releaseArgs = @('release', 'create', $tag, '--repo', $repo, '--title', "MineLatino Cosmetics $tag", '--notes', "Cosmetics mod $version for Minecraft $mcVersion")
-    if ($fabricJar) { $releaseArgs += $fabricJar.FullName }
-    if ($forgeJar) { $releaseArgs += $forgeJar.FullName }
+
+    $releaseArgs = @('release', 'create', $tag, '--repo', $repo, '--title', "MineLatino Cosmetics $tag")
+    $notesFile = Join-Path $repoRoot "docs\release-$($Version -replace '^0\.1\.0-', '').md"
+    if (Test-Path -LiteralPath $notesFile) {
+        $releaseArgs += @('--notes-file', $notesFile)
+    } else {
+        $releaseArgs += @('--notes', "Cosmetics mod $Version for Minecraft $($MinecraftVersions -join ', ')")
+    }
+    $releaseArgs += $artifacts.File.FullName
     gh @releaseArgs
-    if ($LASTEXITCODE -ne 0) { throw 'GitHub Release failed' }
-    Write-Host "Release created: https://github.com/$repo/releases/tag/$tag" -ForegroundColor Green
+    if ($LASTEXITCODE -ne 0) { throw 'GitHub release failed; mods.json was not changed' }
 
-    # ── 4. Update mods.json ───────────────────────────────────────────────
-    Write-Host "`n== Updating mods.json ==" -ForegroundColor Cyan
-    $fabricSha1 = (Get-FileHash $fabricJar.FullName -Algorithm SHA1).Hash.ToLower()
-    $mods = @(
+    $versions = foreach ($artifact in $artifacts) {
         @{
-            id = 'minelatino-cosmetics'
-            name = 'MineLatino Cosmetics'
-            versions = @(
-                @{
-                    modVersion = $version
-                    minecraftVersions = @($mcVersion)
-                    loader = 'fabric'
-                    downloadUrl = "https://github.com/$repo/releases/download/$tag/$($fabricJar.Name)"
-                    sha1 = $fabricSha1
-                    fileName = $fabricJar.Name
-                    fileSize = $fabricJar.Length
-                }
-            )
-        }
-    )
-    if ($forgeJar) {
-        $forgeSha1 = (Get-FileHash $forgeJar.FullName -Algorithm SHA1).Hash.ToLower()
-        $mods[0].versions += @{
-            modVersion = $version
-            minecraftVersions = @($mcVersion)
-            loader = 'forge'
-            downloadUrl = "https://github.com/$repo/releases/download/$tag/$($forgeJar.Name)"
-            sha1 = $forgeSha1
-            fileName = $forgeJar.Name
-            fileSize = $forgeJar.Length
+            modVersion = $Version
+            minecraftVersions = @($artifact.MinecraftVersion)
+            loader = $artifact.Loader
+            downloadUrl = "https://github.com/$repo/releases/download/$tag/$($artifact.File.Name)"
+            sha1 = $artifact.Sha1
+            fileName = $artifact.File.Name
+            fileSize = $artifact.File.Length
         }
     }
-    $modsJson = $mods | ConvertTo-Json -Depth 5 -Compress
-    node -e "const fs=require('fs'); const d=JSON.parse(process.argv[1]); const arr=Array.isArray(d)?d:[d]; fs.writeFileSync('mods.json',JSON.stringify(arr));" $modsJson
-    Write-Host "mods.json updated" -ForegroundColor Green
-
-    # ── 5. Push mods.json ─────────────────────────────────────────────────
-    Write-Host "`n== Pushing mods.json to GitHub ==" -ForegroundColor Cyan
-    Push-Location $root
-    try {
-        git add mods.json
-        git commit -m "chore: update mods.json to $tag"
-        git push
-        Write-Host "mods.json pushed" -ForegroundColor Green
-    } finally { Pop-Location }
+    $manifest = @(@{ id = 'minelatino-cosmetics'; name = 'MineLatino Cosmetics'; versions = @($versions) })
+    $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $repoRoot 'mods.json') -Encoding utf8
+    Write-Host 'Release published and mods.json generated. Commit it only after reviewing the release.' -ForegroundColor Green
 }
 
-# ── 6. Local install ──────────────────────────────────────────────────────
-$instanceMods = "E:\.minecraftx\instances\Minecraft 1.21.4 fabric\mods"
-if (Test-Path $instanceMods) {
-    Write-Host "`n== Installing to local instance ==" -ForegroundColor Cyan
-    Get-ChildItem $instanceMods -Filter "minelatino-cosmetics-*.jar" | ForEach-Object {
-        Remove-Item $_.FullName -Force
-        Write-Host "Removed old: $($_.Name)" -ForegroundColor Yellow
-    }
-    Copy-Item $fabricJar.FullName $instanceMods -Force
-    Write-Host "Installed: $($fabricJar.Name)" -ForegroundColor Green
-} else {
-    Write-Host "Instance mods folder not found, skipping local install" -ForegroundColor Yellow
-}
+if ($LocalInstanceMods) {
+    $modsDir = (Resolve-Path -LiteralPath $LocalInstanceMods).Path
+    $candidate = $artifacts | Where-Object { $_.Loader -eq 'fabric' } | Select-Object -First 1
+    if (-not $candidate) { throw 'No Fabric artifact is available for local installation' }
 
-Write-Host "`n== Deploy complete ==" -ForegroundColor Cyan
-Write-Host "Launcher will auto-sync the new version on next config refresh (~5 min)" -ForegroundColor Gray
+    # Copy and verify first; old versions remain usable until the replacement is complete.
+    $pending = Join-Path $modsDir ($candidate.File.Name + '.pending')
+    Copy-Item -LiteralPath $candidate.File.FullName -Destination $pending -Force
+    $pendingSha1 = (Get-FileHash -LiteralPath $pending -Algorithm SHA1).Hash.ToLowerInvariant()
+    if ($pendingSha1 -ne $candidate.Sha1) { throw 'Local pending JAR failed SHA-1 verification; old mods were preserved' }
+    $destination = Join-Path $modsDir $candidate.File.Name
+    Move-Item -LiteralPath $pending -Destination $destination -Force
+    Get-ChildItem -LiteralPath $modsDir -File -Filter 'minelatino-cosmetics-*.jar' |
+        Where-Object { $_.FullName -ne $destination } |
+        Remove-Item -Force
+    Write-Host "Installed $($candidate.File.Name); older JARs were removed afterwards." -ForegroundColor Green
+}

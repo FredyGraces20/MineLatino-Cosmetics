@@ -42,11 +42,15 @@ public final class CosmeticsClient {
     /** Tracks whether an async equipment refresh is in progress. */
     private volatile boolean refreshing = false;
 
-    private CosmeticsClient(String backendUrl, Path cacheDir) {
-        this.api = new ApiClient(backendUrl);
-        this.auth = new AuthManager(api);
+    /** Auto-authentication and renewal use a long cooldown to protect Mojang and the backend. */
+    private long lastReconnectAttempt = 0;
+    private static final long RECONNECT_COOLDOWN = 300_000;
+
+    private CosmeticsClient(CosmeticsConfig config, Path cacheDir) {
+        this.api = new ApiClient(config.backendUrl(), config.hasAccountSession());
+        this.auth = new AuthManager(api, config.accountToken(), config.accountId(), config.accountExpiresAt());
         this.equipment = new EquipmentCache(api);
-        this.resources = new ResourceCache(backendUrl, cacheDir);
+        this.resources = new ResourceCache(config.backendUrl(), cacheDir);
         this.wardrobe = new WardrobeController(api, java.util.concurrent.ForkJoinPool.commonPool(),
                 task -> Minecraft.getInstance().execute(task), (uuid, entries) -> equipment.setEquipped(uuid,
                 entries.stream().map(e -> new EquipmentCache.EquippedItem(e.slot(), e.cosmeticId())).toList()));
@@ -58,8 +62,8 @@ public final class CosmeticsClient {
                 if (instance == null) {
                     CosmeticsConfig config = CosmeticsConfig.read(Minecraft.getInstance().gameDirectory.toPath());
                     Path cacheDir = Minecraft.getInstance().gameDirectory.toPath().resolve("cache").resolve("minelatino-cosmetics");
-                    instance = new CosmeticsClient(config.backendUrl(), cacheDir);
-                    CosmeticsDiagnostics.event("START","build=alpha.15 minecraft=1.21.11 java="+System.getProperty("java.version"));
+                    instance = new CosmeticsClient(config, cacheDir);
+                    CosmeticsDiagnostics.event("START","build=alpha.19 minecraft=1.21.11 java="+System.getProperty("java.version"));
                     LOG.info("Cosmetics backend: {}", config.backendUrl());
                 }
             }
@@ -100,6 +104,26 @@ public final class CosmeticsClient {
             }
         }
 
+        // Keep the default 1.21.11 profile behaviour aligned with 1.21.4: link
+        // automatically on world entry and renew an expired premium session.
+        if (mc.player != null && !auth.isConnected() && auth.state() != AuthManager.State.AUTHENTICATING) {
+            long reconnectNow = System.currentTimeMillis();
+            if (reconnectNow - lastReconnectAttempt >= RECONNECT_COOLDOWN) {
+                lastReconnectAttempt = reconnectNow;
+                CosmeticsDiagnostics.event("AUTO_RECONNECT", "state=" + auth.state());
+                auth.authenticate().whenComplete((session, error) -> {
+                    if (error != null) {
+                        LOG.warn("Auto-reconnect failed: {}", auth.errorMessage());
+                        CosmeticsDiagnostics.event("AUTO_RECONNECT_FAILED", CosmeticsDiagnostics.failure(error));
+                    } else {
+                        CosmeticsDiagnostics.event("AUTO_RECONNECT_OK", "sessionUuid=" + CosmeticsDiagnostics.id(session.uuid()));
+                        wardrobe.connect(session);
+                        lastEquipmentRefresh = 0;
+                    }
+                });
+            }
+        }
+
         // Periodic transform refresh (async, non-blocking)
         refreshTransformsIfNeeded();
 
@@ -110,9 +134,17 @@ public final class CosmeticsClient {
         if (refreshing) return; // previous refresh still running
         lastEquipmentRefresh = now;
 
-        List<String> nearbyUuids = mc.level.players().stream()
+        List<String> nearbyUuids = new ArrayList<>(mc.level.players().stream()
                 .map(p -> p.getGameProfile().id().toString().replace("-", ""))
-                .collect(Collectors.toList());
+                .collect(Collectors.toList()));
+        Map<String, String> nearbyNames = mc.level.players().stream().collect(Collectors.toMap(
+                p -> WardrobeController.normalize(p.getGameProfile().id().toString()),
+                p -> p.getGameProfile().name(), (first, ignored) -> first));
+        if (auth.isConnected() && auth.session() != null) {
+            String verified = WardrobeController.normalize(auth.session().uuid());
+            if (!nearbyUuids.contains(verified)) nearbyUuids.add(verified);
+            nearbyNames.put(verified, auth.session().name());
+        }
 
         if (nearbyUuids.isEmpty()) return;
 
@@ -122,7 +154,7 @@ public final class CosmeticsClient {
                 // Split into batches of BATCH_SIZE
                 for (int i = 0; i < nearbyUuids.size(); i += BATCH_SIZE) {
                     List<String> batch = nearbyUuids.subList(i, Math.min(i + BATCH_SIZE, nearbyUuids.size()));
-                    equipment.refresh(batch);
+                    equipment.refresh(batch, nearbyNames);
                 }
             } catch (Exception e) {
                 LOG.debug("Equipment refresh failed", e);
@@ -184,7 +216,7 @@ public final class CosmeticsClient {
         Session s=auth.session();
         String server=mc.player==null ? "none" : WardrobeController.normalize(mc.player.getUUID().toString());
         String owner=s==null ? "none" : WardrobeController.normalize(s.uuid());
-        String state="build=alpha.15 minecraft=1.21.11\naccountUuid="+mc.getUser().getProfileId()+
+        String state="build=alpha.19 minecraft=1.21.11\naccountUuid="+mc.getUser().getProfileId()+
                 "\nserverUuid="+server+"\nsessionUuid="+owner+"\nauth="+auth.state()+
                 "\nsessionValid="+auth.isConnected()+"\nwardrobe="+wardrobe.snapshot().phase()+
                 "\nowned="+wardrobe.snapshot().owned().size()+"\nconfirmed="+wardrobe.snapshot().equipped()+

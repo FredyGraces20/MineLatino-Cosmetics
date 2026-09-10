@@ -1,10 +1,13 @@
+def targetMcVersion = project.findProperty('mcVersion') ?: '1.21.4'
+
 allprojects {
     group = 'com.minelatino.cosmetics'
-    version = '0.1.0-alpha.16'
+    version = '0.1.0-alpha.19'
     repositories { mavenCentral() }
 }
 subprojects {
     apply plugin: 'java'
+    layout.buildDirectory = rootProject.layout.projectDirectory.dir("build/${targetMcVersion}/${project.name}")
     java.toolchain.languageVersion = JavaLanguageVersion.of(21)
     tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8'; options.release = 21 }
     tasks.withType(Test).configureEach { useJUnitPlatform() }

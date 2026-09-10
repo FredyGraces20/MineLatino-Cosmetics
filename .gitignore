@@ -1,5 +1,7 @@
 .gradle/
 **/build/
+**/.codex-build/
+**/.codex-build-*/
 **/run/
 .idea/
 *.iml

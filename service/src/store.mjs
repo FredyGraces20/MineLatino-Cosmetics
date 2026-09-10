@@ -74,6 +74,14 @@ export class Store {
       CREATE TABLE IF NOT EXISTS resource_files(cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id), name TEXT NOT NULL, file_path TEXT NOT NULL, sha256 TEXT NOT NULL, file_size INTEGER NOT NULL, mcmeta_path TEXT, mcmeta_size INTEGER, uploaded_at INTEGER NOT NULL, PRIMARY KEY(cosmetic_id, name));
       CREATE TABLE IF NOT EXISTS cosmetic_transforms(cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id), slot TEXT NOT NULL CHECK(slot IN ('cape','hat','wings','backpack','pet')), translation_x REAL DEFAULT 0, translation_y REAL DEFAULT 0, translation_z REAL DEFAULT 0, rotation_x REAL DEFAULT 0, rotation_y REAL DEFAULT 0, rotation_z REAL DEFAULT 0, scale_x REAL DEFAULT 1, scale_y REAL DEFAULT 1, scale_z REAL DEFAULT 1, updated_at INTEGER, PRIMARY KEY(cosmetic_id, slot));
       CREATE TABLE IF NOT EXISTS pet_animations(cosmetic_id TEXT PRIMARY KEY REFERENCES cosmetics(id), animation_name TEXT NOT NULL, file_path TEXT, sha256 TEXT, file_size INTEGER, updated_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS player_accounts(account_id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE COLLATE NOCASE, nick TEXT NOT NULL, password_hash TEXT NOT NULL, password_salt TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','suspended','deleted')), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER);
+      CREATE TABLE IF NOT EXISTS account_sessions(token_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES player_accounts(account_id) ON DELETE CASCADE, scope TEXT NOT NULL CHECK(scope IN ('account','game')), expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL, last_used_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS account_entitlements(account_id TEXT NOT NULL REFERENCES player_accounts(account_id) ON DELETE CASCADE, cosmetic_id TEXT NOT NULL REFERENCES cosmetics(id), active INTEGER NOT NULL CHECK(active IN (0,1)), PRIMARY KEY(account_id,cosmetic_id));
+      CREATE TABLE IF NOT EXISTS account_equipment(account_id TEXT NOT NULL REFERENCES player_accounts(account_id) ON DELETE CASCADE, slot TEXT NOT NULL, cosmetic_id TEXT NOT NULL, PRIMARY KEY(account_id,slot), FOREIGN KEY(account_id,cosmetic_id) REFERENCES account_entitlements(account_id,cosmetic_id));
+      CREATE TABLE IF NOT EXISTS account_presence(account_id TEXT PRIMARY KEY REFERENCES player_accounts(account_id) ON DELETE CASCADE, profile_uuid TEXT NOT NULL, name TEXT NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS player_accounts_nick ON player_accounts(nick COLLATE NOCASE);
+      CREATE INDEX IF NOT EXISTS account_presence_identity ON account_presence(name COLLATE NOCASE,profile_uuid,updated_at);
+      CREATE INDEX IF NOT EXISTS account_entitlement_owners ON account_entitlements(cosmetic_id,active,account_id);
       `);
     // Migration: ensure model columns exist (for databases that may have incomplete migration)
     const columns = this.db.prepare("PRAGMA table_info(resources)").all().map(c => c.name);
@@ -88,6 +96,20 @@ export class Store {
     }
     this.migrateCosmeticSlots();
     this.migrateCosmeticTransforms();
+    this.repairInvalidPublishedCosmetics();
+  }
+  repairInvalidPublishedCosmetics() {
+    const invalid = this.db.prepare(`SELECT id FROM cosmetics c WHERE c.status='published'
+      AND NOT EXISTS(SELECT 1 FROM resources r WHERE r.cosmetic_id=c.id AND r.file_path<>'')
+      AND NOT EXISTS(SELECT 1 FROM resource_files f WHERE f.cosmetic_id=c.id)`).all();
+    if (invalid.length === 0) return;
+    this.transaction(() => {
+      for (const { id } of invalid) {
+        this.db.prepare('DELETE FROM equipment WHERE cosmetic_id=?').run(id);
+        this.db.prepare("UPDATE cosmetics SET status='draft',revision=revision+1 WHERE id=?").run(id);
+        this.audit('system', 'catalog.auto-draft', { id, reason: 'missing-texture' });
+      }
+    });
   }
   migrateCosmeticSlots() {
     const schema = this.db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='cosmetics'").get().sql;
@@ -205,6 +227,10 @@ export class Store {
   verifiedPlayer(owner, name) {
     this.db.prepare('INSERT INTO players VALUES(?,?,?) ON CONFLICT(uuid) DO UPDATE SET name=excluded.name,verified_at=excluded.verified_at').run(uuid(owner), text(name, 16), Date.now());
   }
+  verifiedPlayerByName(name) {
+    requireThat(typeof name === 'string' && /^[A-Za-z0-9_]{3,16}$/.test(name), 'Nombre de Minecraft inválido');
+    return this.db.prepare('SELECT uuid,name FROM players WHERE name=? COLLATE NOCASE ORDER BY verified_at DESC LIMIT 1').get(name);
+  }
   wardrobe(owner) {
     owner = uuid(owner);
     return {
@@ -266,6 +292,124 @@ export class Store {
     return { deleted: input.revision };
   }
   auditPage(offset = 0) { return this.db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT 50 OFFSET ?').all(offset); }
+
+  // ── MineLatino player accounts ─────────────────────────────────────────
+
+  publicPlayerAccount(row) {
+    if (!row) return undefined;
+    return { accountId: row.account_id, email: row.email, nick: row.nick, status: row.status,
+      createdAt: row.created_at, updatedAt: row.updated_at, deletedAt: row.deleted_at ?? null };
+  }
+
+  createPlayerAccount(input) {
+    const now = Date.now();
+    this.db.prepare(`INSERT INTO player_accounts(account_id,email,nick,password_hash,password_salt,status,created_at,updated_at)
+      VALUES(?,?,?,?,?,'active',?,?)`).run(input.accountId, input.email, input.nick, input.passwordHash, input.passwordSalt, now, now);
+    this.audit(`account:${input.accountId}`, 'player-account.create', { accountId: input.accountId, nick: input.nick });
+    return this.publicPlayerAccount(this.accountById(input.accountId, true));
+  }
+
+  accountByEmail(email, includePrivate = false) {
+    const row = this.db.prepare('SELECT * FROM player_accounts WHERE email=? COLLATE NOCASE').get(email);
+    return includePrivate ? row : this.publicPlayerAccount(row);
+  }
+
+  accountById(accountId, includePrivate = false) {
+    requireThat(typeof accountId === 'string' && /^[a-f0-9]{32}$/.test(accountId), 'ID de cuenta inválido');
+    const row = this.db.prepare('SELECT * FROM player_accounts WHERE account_id=?').get(accountId);
+    return includePrivate ? row : this.publicPlayerAccount(row);
+  }
+
+  listPlayerAccounts(query = '', offset = 0) {
+    const q = `%${String(query).trim().toLowerCase()}%`;
+    return this.db.prepare(`SELECT account_id,email,nick,status,created_at,updated_at,deleted_at FROM player_accounts
+      WHERE lower(email) LIKE ? OR lower(nick) LIKE ? OR account_id LIKE ? ORDER BY created_at DESC LIMIT 50 OFFSET ?`)
+      .all(q, q, q, offset).map(row => this.publicPlayerAccount(row));
+  }
+
+  updatePlayerAccount(accountId, input, actor = `account:${accountId}`) {
+    const row = this.accountById(accountId, true); requireThat(row, 'Cuenta no encontrada', 404);
+    const email = input.email === undefined ? row.email : input.email.trim().toLowerCase();
+    const nick = input.nick === undefined ? row.nick : input.nick;
+    const status = input.status === undefined ? row.status : input.status;
+    requireThat(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254, 'Correo inválido');
+    requireThat(/^[A-Za-z0-9_]{3,16}$/.test(nick), 'Nick inválido');
+    requireThat(['active','suspended','deleted'].includes(status), 'Estado inválido');
+    const duplicate = this.db.prepare('SELECT account_id FROM player_accounts WHERE email=? COLLATE NOCASE AND account_id<>?').get(email, accountId);
+    requireThat(!duplicate, 'Ya existe una cuenta con ese correo', 409);
+    const passwordHash = input.passwordHash ?? row.password_hash, passwordSalt = input.passwordSalt ?? row.password_salt;
+    const now = Date.now(), deletedAt = status === 'deleted' ? (row.deleted_at ?? now) : null;
+    this.db.prepare(`UPDATE player_accounts SET email=?,nick=?,status=?,password_hash=?,password_salt=?,updated_at=?,deleted_at=? WHERE account_id=?`)
+      .run(email, nick, status, passwordHash, passwordSalt, now, deletedAt, accountId);
+    if (status !== 'active') this.deleteAccountSessions(accountId);
+    this.audit(actor, 'player-account.update', { accountId, nick, status, emailChanged: email !== row.email });
+    return this.accountById(accountId);
+  }
+
+  deletePlayerAccount(accountId, actor) {
+    const result = this.updatePlayerAccount(accountId, { status: 'deleted' }, actor);
+    this.db.prepare('DELETE FROM account_presence WHERE account_id=?').run(accountId);
+    this.audit(actor, 'player-account.delete', { accountId });
+    return result;
+  }
+
+  createAccountSession(tokenHash, accountId, scope, expiresAt, now) {
+    this.db.prepare('DELETE FROM account_sessions WHERE expires_at<=?').run(now);
+    this.db.prepare('INSERT INTO account_sessions VALUES(?,?,?,?,?,?)').run(tokenHash, accountId, scope, expiresAt, now, now);
+  }
+  accountSession(tokenHash) { return this.db.prepare('SELECT * FROM account_sessions WHERE token_hash=?').get(tokenHash); }
+  touchAccountSession(tokenHash, now) { this.db.prepare('UPDATE account_sessions SET last_used_at=? WHERE token_hash=?').run(now, tokenHash); }
+  deleteAccountSession(tokenHash) { this.db.prepare('DELETE FROM account_sessions WHERE token_hash=?').run(tokenHash); }
+  deleteAccountSessions(accountId) { this.db.prepare('DELETE FROM account_sessions WHERE account_id=?').run(accountId); }
+
+  accountEntitlement(input, active, actor) {
+    const accountId = input.accountId, id = cosmeticId(input.cosmeticId);
+    requireThat(this.accountById(accountId, true), 'Cuenta no encontrada', 404); this.cosmetic(id);
+    this.db.prepare(`INSERT INTO account_entitlements VALUES(?,?,?) ON CONFLICT(account_id,cosmetic_id)
+      DO UPDATE SET active=excluded.active`).run(accountId, id, active ? 1 : 0);
+    if (!active) this.db.prepare('DELETE FROM account_equipment WHERE account_id=? AND cosmetic_id=?').run(accountId, id);
+    this.audit(actor, active ? 'account-entitlement.grant' : 'account-entitlement.revoke', { accountId, cosmeticId: id });
+    return { active };
+  }
+
+  accountAppearance(accountId) {
+    return this.db.prepare(`SELECT q.slot,q.cosmetic_id AS cosmeticId FROM account_equipment q
+      JOIN account_entitlements e ON e.account_id=q.account_id AND e.cosmetic_id=q.cosmetic_id
+      JOIN cosmetics c ON c.id=q.cosmetic_id WHERE q.account_id=? AND e.active=1 AND c.status='published' ORDER BY q.slot`).all(accountId);
+  }
+
+  accountWardrobe(accountId) {
+    return { accountId, uuid: accountId, owned: this.db.prepare(`SELECT c.* FROM account_entitlements e JOIN cosmetics c ON c.id=e.cosmetic_id
+      WHERE e.account_id=? AND e.active=1 ORDER BY c.id`).all(accountId), equipped: this.accountAppearance(accountId) };
+  }
+
+  accountEquip(accountId, slot, id) {
+    requireThat(SLOTS.includes(slot), 'Categoría inválida');
+    if (id === null) this.db.prepare('DELETE FROM account_equipment WHERE account_id=? AND slot=?').run(accountId, slot);
+    else {
+      const cosmetic = this.cosmetic(id);
+      requireThat(cosmetic.slot === slot && cosmetic.status === 'published', 'Cosmético no equipable', 409);
+      requireThat(this.db.prepare('SELECT 1 FROM account_entitlements WHERE account_id=? AND cosmetic_id=? AND active=1').get(accountId, id), 'No posees este cosmético', 403);
+      this.db.prepare(`INSERT INTO account_equipment VALUES(?,?,?) ON CONFLICT(account_id,slot)
+        DO UPDATE SET cosmetic_id=excluded.cosmetic_id`).run(accountId, slot, id);
+    }
+    return this.accountAppearance(accountId);
+  }
+
+  updateAccountPresence(accountId, profileUuid, name) {
+    profileUuid = uuid(profileUuid); name = text(name, 16);
+    requireThat(/^[A-Za-z0-9_]{3,16}$/.test(name), 'Nombre de Minecraft inválido');
+    this.db.prepare(`INSERT INTO account_presence VALUES(?,?,?,?) ON CONFLICT(account_id)
+      DO UPDATE SET profile_uuid=excluded.profile_uuid,name=excluded.name,updated_at=excluded.updated_at`)
+      .run(accountId, profileUuid, name, Date.now());
+    return { accountId, profileUuid, name };
+  }
+
+  accountAppearanceByIdentity(profileUuid, name, freshAfter) {
+    const row = this.db.prepare(`SELECT account_id,profile_uuid,name FROM account_presence WHERE updated_at>=?
+      AND (profile_uuid=? OR name=? COLLATE NOCASE) ORDER BY updated_at DESC LIMIT 1`).get(freshAfter, profileUuid, name);
+    return row ? { accountId: row.account_id, uuid: row.profile_uuid, name: row.name, equipped: this.accountAppearance(row.account_id) } : undefined;
+  }
 
   // ── Admin accounts ──────────────────────────────────────────────────────
 
@@ -353,6 +497,12 @@ export class Store {
     return this.db.prepare('SELECT * FROM resources WHERE cosmetic_id=?').get(cosmeticId(id));
   }
 
+  hasTexture(id) {
+    id = cosmeticId(id);
+    const legacy = this.getResource(id);
+    return !!legacy?.file_path || this.resourceFileCount(id) > 0;
+  }
+
   product(id) {
     const row = this.db.prepare('SELECT * FROM cosmetic_products WHERE cosmetic_id=?').get(cosmeticId(id));
     return { description: row?.description ?? '', amountMinor: row?.amount_minor ?? null, currency: row?.currency ?? 'USD' };
@@ -436,6 +586,9 @@ export class Store {
     const s = Array.isArray(transform.scale) ? transform.scale : [1, 1, 1];
     requireThat(t.length === 3 && r.length === 3 && s.length === 3, 'Transform debe tener 3 valores por eje');
     for (const v of [...t, ...r, ...s]) requireThat(Number.isFinite(v), 'Valores de transform deben ser números finitos');
+    requireThat(t.every(v => Math.abs(v) <= 1024), 'La posición excede el límite permitido');
+    requireThat(r.every(v => Math.abs(v) <= 36000), 'La rotación excede el límite permitido');
+    requireThat(s.every(v => v > 0 && v <= 100), 'La escala debe ser mayor que 0 y como máximo 100');
     this.db.prepare(`INSERT INTO cosmetic_transforms(cosmetic_id, slot, translation_x, translation_y, translation_z, rotation_x, rotation_y, rotation_z, scale_x, scale_y, scale_z, updated_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(cosmetic_id, slot) DO UPDATE SET
       translation_x=excluded.translation_x, translation_y=excluded.translation_y, translation_z=excluded.translation_z,

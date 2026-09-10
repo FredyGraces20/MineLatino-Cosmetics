@@ -31,8 +31,12 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: gradle
-      - run: chmod +x gradlew
-      - name: Build Fabric and Forge 1.21.4
-        run: ./gradlew build -x test -PmcVersion=1.21.4 --no-daemon
+      - run: chmod +x gradlew forge/gradlew
+      - name: Test common code and build Fabric 1.21.4
+        run: ./gradlew build -PmcVersion=1.21.4 --no-daemon
       - name: Build Fabric 1.21.11
-        run: ./gradlew :fabric:build -x test -PmcVersion=1.21.11 --no-daemon
+        run: ./gradlew build -PmcVersion=1.21.11 --no-daemon
+      - name: Build Forge 1.21.4
+        run: ./forge/gradlew -p forge build -PmcVersion=1.21.4 --no-daemon
+      - name: Build Forge 1.21.11
+        run: ./forge/gradlew -p forge build -PmcVersion=1.21.11 --no-daemon

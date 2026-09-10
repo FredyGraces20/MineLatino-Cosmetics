@@ -23,13 +23,23 @@ public final class AuthManager {
     public enum State { DISCONNECTED, AUTHENTICATING, CONNECTED, ERROR }
 
     private final ApiClient api;
+    private final String accountToken;
+    private final String accountId;
+    private final long accountExpiresAt;
     private volatile Session session;
     private volatile State state = State.DISCONNECTED;
     private volatile String errorMessage;
     private CompletableFuture<Session> pendingAuth;
 
     public AuthManager(ApiClient api) {
+        this(api, null, null, 0);
+    }
+
+    public AuthManager(ApiClient api, String accountToken, String accountId, long accountExpiresAt) {
         this.api = api;
+        this.accountToken = accountToken;
+        this.accountId = accountId;
+        this.accountExpiresAt = accountExpiresAt;
     }
 
     public State state() { return state; }
@@ -61,6 +71,15 @@ public final class AuthManager {
         pendingAuth = CompletableFuture.supplyAsync(() -> {
             try {
                 LOG.info("Attempting auth with backend URL: {}", api.getBaseUrl());
+                if (accountToken != null && accountId != null && accountExpiresAt > System.currentTimeMillis()) {
+                    ApiClient.AccountInfo account = api.accountSession(accountToken, profileId, username);
+                    if (!accountId.equalsIgnoreCase(account.accountId()) || !"active".equals(account.status()))
+                        throw new SecurityException("The cosmetics backend returned a different MineLatino account");
+                    Session newSession = new Session(accountToken, accountId, account.nick(), accountExpiresAt);
+                    this.session = newSession; this.state = State.CONNECTED; this.errorMessage = null;
+                    CosmeticsDiagnostics.event("AUTH_CONNECTED", "mode=minelatino-account accountId=" + CosmeticsDiagnostics.id(accountId));
+                    return newSession;
+                }
                 try {
                     ApiClient.HealthResponse health = api.health();
                     if (!health.premiumEnabled()) {
@@ -71,10 +90,15 @@ public final class AuthManager {
                     LOG.warn("Health check failed, trying premium auth anyway. Error: {}", e.getMessage());
                 }
 
-                CosmeticsDiagnostics.event("AUTH_MODE","premium-only");
+                CosmeticsDiagnostics.event("AUTH_MODE","premium-fallback");
                 ApiClient.ChallengeResponse challenge = api.challenge(username);
                 joinServer(user, challenge.serverId());
                 ApiClient.VerifyResponse verify = api.verify(challenge.challengeId());
+                String verifiedProfile = WardrobeController.normalize(verify.uuid());
+                if (!verifiedProfile.equalsIgnoreCase(profileId) || verify.token() == null || verify.token().isBlank()
+                        || verify.expiresAt() <= System.currentTimeMillis()) {
+                    throw new SecurityException("The cosmetics backend returned a different or expired Minecraft identity");
+                }
                 Session newSession = new Session(verify.token(), verify.uuid(), verify.name(), verify.expiresAt());
                 this.session = newSession;
                 this.state = State.CONNECTED;

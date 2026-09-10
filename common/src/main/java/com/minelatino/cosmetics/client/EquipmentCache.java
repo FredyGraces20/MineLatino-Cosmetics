@@ -3,6 +3,8 @@ package com.minelatino.cosmetics.client;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,6 +53,11 @@ public final class EquipmentCache {
      * Skips UUIDs that are already cached and not expired.
      */
     public void refresh(List<String> uuids) {
+        refresh(uuids, Map.of());
+    }
+
+    /** Refreshes server UUIDs and, for offline-mode identities, their verified names. */
+    public void refresh(List<String> uuids, Map<String, String> namesByServerUuid) {
         long requestVersion;
         synchronized (this) { requestVersion = mutationVersion; }
         List<String> needed = new ArrayList<>();
@@ -64,7 +71,10 @@ public final class EquipmentCache {
         if (needed.isEmpty()) return;
 
         try {
-            ApiClient.AppearanceResponse response = api.appearance(needed);
+            List<String> names = needed.stream().map(namesByServerUuid::get)
+                    .filter(name -> name != null && name.matches("[A-Za-z0-9_]{3,16}"))
+                    .distinct().toList();
+            ApiClient.AppearanceResponse response = api.appearance(needed, names);
             long now = System.currentTimeMillis();
             synchronized (this) {
             // A late public read must never undo a newer wardrobe write or invalidation.
@@ -72,10 +82,42 @@ public final class EquipmentCache {
                 CosmeticsDiagnostics.event("CACHE_STALE_RESPONSE","ignored after newer equipment change");
                 return;
             }
+            Set<String> returned = new HashSet<>();
             for (ApiClient.PlayerAppearance player : response.players()) {
+                if (player.uuid() == null || !WardrobeController.normalize(player.uuid()).matches("[a-f0-9]{32}")) {
+                    throw new IllegalArgumentException("Appearance response contains an invalid UUID");
+                }
                 List<EquippedItem> items = player.equipped() == null ? List.of()
-                    : player.equipped().stream().map(e -> new EquippedItem(e.slot(), e.cosmeticId())).toList();
-                cache.put(WardrobeController.normalize(player.uuid()), new CachedEntry(items, now));
+                    : player.equipped().stream().map(e -> {
+                        if (e == null || e.slot() == null || !Set.of("CAPE", "HAT", "WINGS", "BACKPACK", "PET").contains(e.slot())
+                                || e.cosmeticId() == null || !e.cosmeticId().matches("[a-z0-9_-]{1,64}")) {
+                            throw new IllegalArgumentException("Appearance response contains invalid equipment");
+                        }
+                        return new EquippedItem(e.slot(), e.cosmeticId());
+                    }).toList();
+                String premiumUuid = WardrobeController.normalize(player.uuid());
+                cache.put(premiumUuid, new CachedEntry(items, now));
+                returned.add(premiumUuid);
+            }
+            // Apply name aliases after direct UUID results so an offline UUID's
+            // empty direct result can never overwrite its premium appearance.
+            for (ApiClient.PlayerAppearance player : response.players()) {
+                if (player.name() != null) {
+                    for (var requested : namesByServerUuid.entrySet()) {
+                        if (player.name().equalsIgnoreCase(requested.getValue())) {
+                            String serverUuid = WardrobeController.normalize(requested.getKey());
+                            CachedEntry premium = cache.get(WardrobeController.normalize(player.uuid()));
+                            if (premium == null) throw new IllegalArgumentException("Appearance alias has no premium entry");
+                            cache.put(serverUuid, premium);
+                            returned.add(serverUuid);
+                        }
+                    }
+                }
+            }
+            // Cache an empty appearance too. Otherwise players without cosmetics
+            // are requested forever and multiply traffic in busy lobbies.
+            for (String uuid : needed) {
+                if (!returned.contains(uuid)) cache.put(uuid, new CachedEntry(List.of(), now));
             }
             }
             CosmeticsDiagnostics.event("APPEARANCE_REFRESH","requested="+needed.size()+" returned="+response.players().size());

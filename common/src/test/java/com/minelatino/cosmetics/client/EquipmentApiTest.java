@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class EquipmentApiTest {
     private static final String UUID="1234567890abcdef1234567890abcdef";
+    private static final String OFFLINE_UUID="abcdef1234567890abcdef1234567890";
     @Test void delayedPublicAppearanceCannotUndoNewEquip() throws Exception {
         HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         CountDownLatch entered=new CountDownLatch(1), release=new CountDownLatch(1);
@@ -45,6 +46,24 @@ class EquipmentApiTest {
             assertTrue(api.equip("local-test-token","BACKPACK",null).equipped().isEmpty());
             assertEquals("PUT",method.get()); assertEquals("Bearer local-test-token",auth.get());
             assertTrue(input.get().contains("\"cosmeticId\":null")); assertTrue(input.get().contains("BACKPACK"));
+        } finally { server.stop(0); }
+    }
+    @Test void verifiedNameMapsPremiumAppearanceToOfflineServerUuid() throws Exception {
+        HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        AtomicReference<String> query=new AtomicReference<>();
+        server.createContext("/v1/cosmetics/appearance",exchange->{
+            query.set(exchange.getRequestURI().getRawQuery());
+            byte[] body=("{\"players\":[{\"uuid\":\""+OFFLINE_UUID+"\",\"name\":null,\"equipped\":[]},"
+                    +"{\"uuid\":\""+UUID+"\",\"name\":\"TestPlayer\",\"equipped\":[{\"slot\":\"BACKPACK\",\"cosmeticId\":\"pack\"}]}]}")
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,body.length); exchange.getResponseBody().write(body); exchange.close();
+        }); server.start();
+        try {
+            var cache=new EquipmentCache(new ApiClient("http://127.0.0.1:"+server.getAddress().getPort()));
+            cache.refresh(List.of(OFFLINE_UUID), java.util.Map.of(OFFLINE_UUID,"TestPlayer"));
+            assertTrue(query.get().contains("names=TestPlayer"));
+            assertEquals("pack",cache.get(OFFLINE_UUID).getFirst().cosmeticId());
+            assertEquals("pack",cache.get(UUID).getFirst().cosmeticId());
         } finally { server.stop(0); }
     }
 }

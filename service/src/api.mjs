@@ -66,10 +66,11 @@ function validateResourceFile(buffer, filename) {
   return ext;
 }
 
-export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 'http://127.0.0.1:8787', playerAuth = new PlayerAuth(), premiumEnabled = true, now = Date.now }) {
+export function createApi({ store, adminToken, adminAuth, accountAuth, commerce, resourceDir, origin = 'http://127.0.0.1:8787', playerAuth = new PlayerAuth(), premiumEnabled = true, now = Date.now }) {
   requireThat(typeof adminToken === 'string' && adminToken.length >= 32, 'Configura una clave administrativa de al menos 32 caracteres');
   if (resourceDir) mkdirSync(resourceDir, { recursive: true });
   const rates = new Map();
+  const accountAuthRates = new Map();
   const json = (data, status = 200) => Response.json(data, { status, headers: {
     'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
     'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'", 'Referrer-Policy': 'no-referrer',
@@ -96,6 +97,7 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
     try {
       const time = now();
       for (const [ip, bucket] of rates) if (bucket.until <= time) rates.delete(ip);
+      for (const [ip, bucket] of accountAuthRates) if (bucket.until <= time) accountAuthRates.delete(ip);
       requireThat(rates.has(remoteAddress) || rates.size < 5000, 'Servicio ocupado', 429);
       const bucket = rates.get(remoteAddress) ?? { count: 0, until: time + 60_000 };
       bucket.count++; rates.set(remoteAddress, bucket);
@@ -106,8 +108,85 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
       requireThat(publicStorefront || !request.headers.get('origin') || request.headers.get('origin') === origin, 'Origen no permitido', 403);
       const authorization = request.headers.get('authorization');
 
+      // ── MineLatino accounts (premium and offline players) ──────────────
+      if (method === 'POST' && ['/v1/account/register', '/v1/account/login'].includes(path)) {
+        const authBucket = accountAuthRates.get(remoteAddress) ?? { count: 0, until: time + 60_000 };
+        authBucket.count++; accountAuthRates.set(remoteAddress, authBucket);
+        requireThat(authBucket.count <= 20, 'Demasiados intentos de acceso; espera un minuto', 429);
+      }
+      if (method === 'POST' && path === '/v1/account/register') {
+        requireThat(accountAuth, 'Cuentas MineLatino no configuradas', 503);
+        return json(accountAuth.register(await body(request)), 201);
+      }
+      if (method === 'POST' && path === '/v1/account/login') {
+        requireThat(accountAuth, 'Cuentas MineLatino no configuradas', 503);
+        return json(accountAuth.login(await body(request)));
+      }
+      if (path.startsWith('/v1/account/')) {
+        requireThat(accountAuth, 'Cuentas MineLatino no configuradas', 503);
+        if (method === 'POST' && path === '/v1/account/logout') {
+          accountAuth.logout(authorization); return json({ ok: true });
+        }
+        const identity = accountAuth.authenticate(authorization, path === '/v1/account/game-token' ? ['account'] : ['account','game']);
+        const accountId = identity.account.account_id;
+        if (method === 'POST' && path === '/v1/account/logout-all') {
+          requireThat(identity.session.scope === 'account', 'Permiso de sesión insuficiente', 403);
+          store.deleteAccountSessions(accountId); return json({ ok: true });
+        }
+        if (method === 'GET' && path === '/v1/account/session') return json({ account: {
+          accountId, nick: identity.account.nick, status: identity.account.status,
+        } });
+        if (method === 'GET' && path === '/v1/account/me') {
+          requireThat(identity.session.scope === 'account', 'Permiso de sesión insuficiente', 403);
+          return json({ account: store.publicPlayerAccount(identity.account) });
+        }
+        if (method === 'PATCH' && path === '/v1/account/me') {
+          requireThat(identity.session.scope === 'account', 'Permiso de sesión insuficiente', 403);
+          const input = await body(request);
+          return json({ account: store.updatePlayerAccount(accountId, { email: input.email, nick: input.nick }) });
+        }
+        if (method === 'DELETE' && path === '/v1/account/me') {
+          requireThat(identity.session.scope === 'account', 'Permiso de sesión insuficiente', 403);
+          return json({ account: store.deletePlayerAccount(accountId, `account:${accountId}`) });
+        }
+        if (method === 'PUT' && path === '/v1/account/password') {
+          requireThat(identity.session.scope === 'account', 'Permiso de sesión insuficiente', 403);
+          accountAuth.updatePassword(accountId, (await body(request)).password); return json({ ok: true });
+        }
+        if (method === 'POST' && path === '/v1/account/game-token') return json(accountAuth.gameToken(authorization), 201);
+        if (method === 'POST' && path === '/v1/account/presence') {
+          const input = await body(request);
+          requireThat(typeof input.name === 'string' && input.name.toLowerCase() === identity.account.nick.toLowerCase(),
+            'El nick del juego no coincide con tu cuenta MineLatino', 409);
+          return json(store.updateAccountPresence(accountId, input.uuid, input.name));
+        }
+        if (method === 'GET' && path === '/v1/account/wardrobe') return json(store.accountWardrobe(accountId));
+        if (method === 'PUT' && path === '/v1/account/equipment') {
+          const input = await body(request);
+          return json({ equipped: store.accountEquip(accountId, input.slot, input.cosmeticId) });
+        }
+        if (method === 'GET' && path === '/v1/account/orders') {
+          requireThat(identity.session.scope === 'account', 'Permiso de sesión insuficiente', 403);
+          requireThat(commerce, 'Comercio no configurado', 503);
+          return json({ items: commerce.listOwner({ accountId }, offset(url)) });
+        }
+        if (method === 'POST' && path === '/v1/account/orders') {
+          requireThat(identity.session.scope === 'account', 'Permiso de sesión insuficiente', 403);
+          requireThat(commerce, 'Comercio no configurado', 503);
+          const input = await body(request);
+          return json({ order: commerce.createOrder({ accountId }, input.cosmeticId, input.provider, input.idempotencyKey) }, 201);
+        }
+        const cancelOrderMatch = path.match(/^\/v1\/account\/orders\/([0-9a-f-]{36})\/cancel$/i);
+        if (method === 'POST' && cancelOrderMatch) {
+          requireThat(identity.session.scope === 'account', 'Permiso de sesión insuficiente', 403);
+          requireThat(commerce, 'Comercio no configurado', 503);
+          return json({ order: commerce.cancel({ accountId }, cancelOrderMatch[1]) });
+        }
+      }
+
       if (publicStorefront && path === '/v1/storefront/payments') {
-        return Response.json({ providers: ['paypal', 'binance', 'mercadopago'].map(id => ({ id, enabled: false })), checkoutEnabled: false },
+        const providers = commerce?.providers() ?? [];
+        return Response.json({ providers, checkoutEnabled: providers.some(provider => provider.enabled) },
           { headers: { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
       }
       if (publicStorefront && path === '/v1/storefront/catalog') {
@@ -123,8 +202,9 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
         return Response.json({ items, nextOffset: items.length === 50 ? start + 50 : null },
           { headers: { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
       }
-      // Fail closed until a verified payment adapter AND premium checkout authentication are installed.
-      if (method === 'POST' && path === '/v1/storefront/checkout') throw new ApiError(503, 'Los pagos todavía no están configurados');
+      // Checkout is authenticated under /v1/account/orders. Never accept an
+      // owner UUID, account ID, or payment approval supplied by the renderer.
+      if (method === 'POST' && path === '/v1/storefront/checkout') throw new ApiError(410, 'Usa el checkout autenticado del launcher');
 
       // ── Resource distribution (public, no auth) ───────────────────────
       const resourceMatch = path.match(/^\/v1\/resources\/([a-z0-9_-]+)$/);
@@ -260,6 +340,47 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
           return json(store.deleteAdmin(username, actor));
         }
 
+        // Player account administration. Kept separate from /admin/accounts,
+        // which manages operator logins for this panel.
+        if (method === 'GET' && path === '/v1/admin/player-accounts') {
+          return json({ items: store.listPlayerAccounts(url.searchParams.get('q') ?? '', offset(url)) });
+        }
+        const playerAccountMatch = path.match(/^\/v1\/admin\/player-accounts\/([a-f0-9]{32})$/);
+        if (playerAccountMatch && method === 'PATCH') {
+          const input = await body(request);
+          return json({ account: store.updatePlayerAccount(playerAccountMatch[1], {
+            email: input.email, nick: input.nick, status: input.status,
+          }, actor) });
+        }
+        if (playerAccountMatch && method === 'DELETE') {
+          return json({ account: store.deletePlayerAccount(playerAccountMatch[1], actor) });
+        }
+        const accountGrantMatch = path.match(/^\/v1\/admin\/player-accounts\/([a-f0-9]{32})\/cosmetics$/);
+        if (accountGrantMatch && ['POST','DELETE'].includes(method)) {
+          const input = await body(request);
+          return json(store.accountEntitlement({ accountId: accountGrantMatch[1], cosmeticId: input.cosmeticId }, method === 'POST', actor));
+        }
+
+        // Orders and manual fulfillment. The operator must verify the payment
+        // outside this panel and record its real, unique reference here.
+        if (method === 'GET' && path === '/v1/admin/orders') {
+          requireThat(commerce, 'Comercio no configurado', 503);
+          return json({ items: commerce.listAdmin({
+            status: url.searchParams.get('status') ?? '', query: url.searchParams.get('q') ?? '', offset: offset(url),
+          }) });
+        }
+        const fulfillOrderMatch = path.match(/^\/v1\/admin\/orders\/([0-9a-f-]{36})\/fulfill$/i);
+        if (method === 'POST' && fulfillOrderMatch) {
+          requireThat(commerce, 'Comercio no configurado', 503);
+          const input = await body(request);
+          const order = store.db.prepare('SELECT * FROM cosmetic_orders WHERE id=?').get(fulfillOrderMatch[1]);
+          requireThat(order, 'Orden no encontrada', 404);
+          requireThat(order.provider === 'manual', 'Esta orden debe confirmarse mediante el webhook firmado de su proveedor', 409);
+          requireThat(typeof input.paymentReference === 'string' && /^[A-Za-z0-9._:@/-]{4,160}$/.test(input.paymentReference), 'Referencia de pago inválida');
+          return json(commerce.settleVerified({ orderId: order.id, provider: order.provider,
+            paymentId: input.paymentReference, amountMinor: order.amount_minor, currency: order.currency, status: 'approved' }));
+        }
+
         // Player search
         if (method === 'GET' && path === '/v1/admin/players') {
           const query = url.searchParams.get('q') ?? '';
@@ -280,7 +401,14 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
           return json({ items });
         }
         const itemMatch = path.match(/^\/v1\/admin\/cosmetics\/catalog\/([a-z0-9_-]+)$/);
-        if (method === 'PUT' && itemMatch) return json(store.saveCosmetic(itemMatch[1], await body(request), actor));
+        if (method === 'PUT' && itemMatch) {
+          const id = cosmeticId(itemMatch[1]);
+          const input = await body(request);
+          if (input.status === 'published') {
+            requireThat(store.hasTexture(id), 'Sube al menos una textura antes de publicar el cosmético', 409);
+          }
+          return json(store.saveCosmetic(id, input, actor));
+        }
 
         // Resource upload (texture PNG)
         const resourceUploadMatch = path.match(/^\/v1\/admin\/cosmetics\/catalog\/([a-z0-9_-]+)\/resource$/);
@@ -554,7 +682,7 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
       }
 
       // ── Public routes ───────────────────────────────────────────────────
-      if (method === 'GET' && path === '/health') return json({ ok: true, premiumEnabled, offlineAuthEnabled: false, stage: 'premium-api' });
+      if (method === 'GET' && path === '/health') return json({ ok: true, premiumEnabled, offlineAuthEnabled: !!accountAuth, stage: accountAuth ? 'account-api' : 'premium-api' });
       if (method === 'GET' && path === '/v1/cosmetics/catalog') {
         const items = store.catalog(false, offset(url)).map(item => ({ ...item, hasResource: !!store.getResource(item.id) }));
         return json({ items });
@@ -563,8 +691,22 @@ export function createApi({ store, adminToken, adminAuth, resourceDir, origin = 
       if (method === 'GET' && path === '/v1/client-config/cosmetic-transforms') return json({ transforms: store.getAllTransforms() });
       if (method === 'GET' && path === '/v1/cosmetics/appearance') {
         const ids = [...new Set((url.searchParams.get('uuids') ?? '').split(',').map(uuid))];
-        requireThat(ids.length <= 50, 'Máximo 50 jugadores');
-        return json({ players: ids.map(id => ({ uuid: id, equipped: store.appearance(id) })) });
+        const names = [...new Set((url.searchParams.get('names') ?? '').split(',').filter(Boolean))];
+        requireThat(ids.length <= 50 && names.length <= 50, 'Máximo 50 jugadores');
+        const players = ids.map(id => {
+          const account = store.accountAppearanceByIdentity(id, '', time - 2 * 60 * 60 * 1000);
+          return account ?? { uuid: id, name: null, equipped: store.appearance(id) };
+        });
+        // Offline-mode servers expose a generated entity UUID. A verified name
+        // lets clients resolve the premium UUID without ever granting ownership
+        // from that name; it only selects already server-owned appearance data.
+        for (const requestedName of names) {
+          const account = store.accountAppearanceByIdentity('0'.repeat(32), requestedName, time - 2 * 60 * 60 * 1000);
+          if (account) { players.push(account); continue; }
+          const verified = store.verifiedPlayerByName(requestedName);
+          if (verified) players.push({ uuid: verified.uuid, name: verified.name, equipped: store.appearance(verified.uuid) });
+        }
+        return json({ players, identityMode: accountAuth ? 'minelatino-account' : 'premium-uuid' });
       }
       if (path.startsWith('/v1/auth/') || path.startsWith('/v1/cosmetics/me/')) {
         // Never trust a UUID supplied by the client. Cosmetics ownership and

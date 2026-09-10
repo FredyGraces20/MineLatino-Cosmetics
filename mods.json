@@ -1,40 +1,43 @@
 [
   {
-    "name": "MineLatino Cosmetics",
     "id": "minelatino-cosmetics",
+    "name": "MineLatino Cosmetics",
     "versions": [
       {
-        "fileName": "minelatino-cosmetics-fabric-1.21.4-0.1.0-alpha.16.jar",
-        "minecraftVersions": [
-          "1.21.4"
-        ],
+        "modVersion": "0.1.0-alpha.19",
+        "minecraftVersions": ["1.21.4"],
         "loader": "fabric",
-        "modVersion": "0.1.0-alpha.16",
-        "sha1": "9c1790940b6e41ea5f50b7a7861b847ac9340998",
-        "fileSize": 144865,
-        "downloadUrl": "https://github.com/FredyGraces20/MineLatino-Cosmetics/releases/download/v0.1.0-alpha.16/minelatino-cosmetics-fabric-1.21.4-0.1.0-alpha.16.jar"
+        "downloadUrl": "https://github.com/FredyGraces20/MineLatino-Cosmetics/releases/download/v0.1.0-alpha.19/minelatino-cosmetics-fabric-1.21.4-0.1.0-alpha.19.jar",
+        "sha1": "5b8eb5a6f71da1873353fc561c97e1d98f9c5ba8",
+        "fileName": "minelatino-cosmetics-fabric-1.21.4-0.1.0-alpha.19.jar",
+        "fileSize": 150922
       },
       {
-        "fileName": "minelatino-cosmetics-forge-1.21.4-0.1.0-alpha.16.jar",
-        "minecraftVersions": [
-          "1.21.4"
-        ],
+        "modVersion": "0.1.0-alpha.19",
+        "minecraftVersions": ["1.21.4"],
         "loader": "forge",
-        "modVersion": "0.1.0-alpha.16",
-        "sha1": "005cfe9962789497c9ac64b9434008725f94b315",
-        "fileSize": 142269,
-        "downloadUrl": "https://github.com/FredyGraces20/MineLatino-Cosmetics/releases/download/v0.1.0-alpha.16/minelatino-cosmetics-forge-1.21.4-0.1.0-alpha.16.jar"
+        "downloadUrl": "https://github.com/FredyGraces20/MineLatino-Cosmetics/releases/download/v0.1.0-alpha.19/minelatino-cosmetics-forge-1.21.4-0.1.0-alpha.19.jar",
+        "sha1": "d4d9e7d75dba361251d833a8195bc288790f546e",
+        "fileName": "minelatino-cosmetics-forge-1.21.4-0.1.0-alpha.19.jar",
+        "fileSize": 148809
       },
       {
-        "fileName": "minelatino-cosmetics-fabric-1.21.11-0.1.0-alpha.16.jar",
-        "minecraftVersions": [
-          "1.21.11"
-        ],
+        "modVersion": "0.1.0-alpha.19",
+        "minecraftVersions": ["1.21.11"],
         "loader": "fabric",
-        "modVersion": "0.1.0-alpha.16",
-        "sha1": "60d67fe45ce8dbc4d8a8167d50f4168db1e647a8",
-        "fileSize": 144773,
-        "downloadUrl": "https://github.com/FredyGraces20/MineLatino-Cosmetics/releases/download/v0.1.0-alpha.16/minelatino-cosmetics-fabric-1.21.11-0.1.0-alpha.16.jar"
+        "downloadUrl": "https://github.com/FredyGraces20/MineLatino-Cosmetics/releases/download/v0.1.0-alpha.19/minelatino-cosmetics-fabric-1.21.11-0.1.0-alpha.19.jar",
+        "sha1": "9055a2adbe92059ecbfefc30b0466b54a332664e",
+        "fileName": "minelatino-cosmetics-fabric-1.21.11-0.1.0-alpha.19.jar",
+        "fileSize": 151321
+      },
+      {
+        "modVersion": "0.1.0-alpha.19",
+        "minecraftVersions": ["1.21.11"],
+        "loader": "forge",
+        "downloadUrl": "https://github.com/FredyGraces20/MineLatino-Cosmetics/releases/download/v0.1.0-alpha.19/minelatino-cosmetics-forge-1.21.11-0.1.0-alpha.19.jar",
+        "sha1": "dc3160f7986d62b2fdc2344647a9d2b2fc719df7",
+        "fileName": "minelatino-cosmetics-forge-1.21.11-0.1.0-alpha.19.jar",
+        "fileSize": 148639
       }
     ]
   }

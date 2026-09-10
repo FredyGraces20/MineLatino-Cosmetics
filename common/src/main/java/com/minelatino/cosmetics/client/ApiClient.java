@@ -21,9 +21,15 @@ public final class ApiClient implements WardrobeController.Gateway {
 
     private final String baseUrl;
     private final HttpClient http;
+    private final boolean accountMode;
 
     public ApiClient(String baseUrl) {
+        this(baseUrl, false);
+    }
+
+    public ApiClient(String baseUrl, boolean accountMode) {
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        this.accountMode = accountMode;
         this.http = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
     }
 
@@ -66,8 +72,22 @@ public final class ApiClient implements WardrobeController.Gateway {
     }
 
     public void logout(String token) throws Exception {
-        HttpResponse<String> response = post("/v1/auth/logout", "{}", token);
+        HttpResponse<String> response = post(accountMode ? "/v1/account/logout" : "/v1/auth/logout", "{}", token);
         if (response.statusCode() != 200) throw new ApiException(response.statusCode(), "logout");
+    }
+
+    public record AccountInfo(String accountId, String nick, String status) {}
+    private record AccountResponse(AccountInfo account) {}
+
+    public AccountInfo accountSession(String token, String uuid, String name) throws Exception {
+        JsonObject body = new JsonObject(); body.addProperty("uuid", uuid); body.addProperty("name", name);
+        HttpResponse<String> presence = post("/v1/account/presence", body.toString(), token);
+        if (presence.statusCode() != 200) throw responseError(presence, "account-presence");
+        HttpResponse<String> response = get("/v1/account/session", token);
+        if (response.statusCode() != 200) throw responseError(response, "account-session");
+        AccountResponse parsed = GSON.fromJson(response.body(), AccountResponse.class);
+        if (parsed == null || parsed.account() == null) throw new ApiException(502, "invalid-account-session");
+        return parsed.account();
     }
 
     // ── Wardrobe ──────────────────────────────────────────────────────
@@ -77,7 +97,7 @@ public final class ApiClient implements WardrobeController.Gateway {
     public record EquippedEntry(String slot, String cosmeticId) {}
 
     public WardrobeResponse wardrobe(String token) throws Exception {
-        HttpResponse<String> response = get("/v1/cosmetics/me/wardrobe", token);
+        HttpResponse<String> response = get(accountMode ? "/v1/account/wardrobe" : "/v1/cosmetics/me/wardrobe", token);
         if (response.statusCode() != 200) throw responseError(response, "wardrobe");
         return GSON.fromJson(response.body(), WardrobeResponse.class);
     }
@@ -89,7 +109,7 @@ public final class ApiClient implements WardrobeController.Gateway {
         body.addProperty("slot", slot);
         if (cosmeticId != null) body.addProperty("cosmeticId", cosmeticId);
         else body.add("cosmeticId", com.google.gson.JsonNull.INSTANCE);
-        HttpResponse<String> response = put("/v1/cosmetics/me/equipment", body.toString(), token);
+        HttpResponse<String> response = put(accountMode ? "/v1/account/equipment" : "/v1/cosmetics/me/equipment", body.toString(), token);
         if (response.statusCode() != 200) throw responseError(response, "equip");
         return GSON.fromJson(response.body(), EquipResponse.class);
     }
@@ -97,14 +117,23 @@ public final class ApiClient implements WardrobeController.Gateway {
     // ── Appearance (batch) ────────────────────────────────────────────
 
     public record AppearanceEntry(String slot, String cosmeticId) {}
-    public record PlayerAppearance(String uuid, List<AppearanceEntry> equipped) {}
+    public record PlayerAppearance(String uuid, String name, List<AppearanceEntry> equipped) {}
     public record AppearanceResponse(List<PlayerAppearance> players) {}
 
     public AppearanceResponse appearance(List<String> uuids) throws Exception {
+        return appearance(uuids, List.of());
+    }
+
+    public AppearanceResponse appearance(List<String> uuids, List<String> names) throws Exception {
         String joined = String.join(",", uuids);
-        HttpResponse<String> response = get("/v1/cosmetics/appearance?uuids=" + joined, null);
+        String joinedNames = String.join(",", names);
+        HttpResponse<String> response = get("/v1/cosmetics/appearance?uuids=" + joined + "&names=" + joinedNames, null);
         if (response.statusCode() != 200) throw new ApiException(response.statusCode(), "appearance");
-        return GSON.fromJson(response.body(), AppearanceResponse.class);
+        AppearanceResponse parsed = GSON.fromJson(response.body(), AppearanceResponse.class);
+        if (parsed == null || parsed.players() == null || parsed.players().size() > 100) {
+            throw new ApiException(502, "invalid-appearance");
+        }
+        return parsed;
     }
 
     // ── Health ────────────────────────────────────────────────────────
@@ -135,7 +164,29 @@ public final class ApiClient implements WardrobeController.Gateway {
     public CosmeticTransformsResponse cosmeticTransforms() throws Exception {
         HttpResponse<String> response = get("/v1/client-config/cosmetic-transforms", null);
         if (response.statusCode() != 200) throw new ApiException(response.statusCode(), "cosmetic-transforms");
-        return GSON.fromJson(response.body(), CosmeticTransformsResponse.class);
+        CosmeticTransformsResponse parsed = GSON.fromJson(response.body(), CosmeticTransformsResponse.class);
+        if (parsed == null || parsed.transforms() == null) return new CosmeticTransformsResponse(Map.of());
+        for (var cosmetic : parsed.transforms().entrySet()) {
+            if (cosmetic.getKey() == null || cosmetic.getValue() == null) throw new ApiException(502, "invalid-cosmetic-transforms");
+            for (var slot : cosmetic.getValue().entrySet()) validateTransform(slot.getValue());
+        }
+        return parsed;
+    }
+
+    private static void validateTransform(TransformData transform) throws ApiException {
+        if (transform == null || !validVector(transform.translation(), 1024, false)
+                || !validVector(transform.rotation(), 36_000, false)
+                || !validVector(transform.scale(), 100, true)) {
+            throw new ApiException(502, "invalid-cosmetic-transform");
+        }
+    }
+
+    private static boolean validVector(float[] values, float limit, boolean positive) {
+        if (values == null || values.length != 3) return false;
+        for (float value : values) {
+            if (!Float.isFinite(value) || Math.abs(value) > limit || (positive && value <= 0)) return false;
+        }
+        return true;
     }
 
     // ── HTTP primitives ───────────────────────────────────────────────

@@ -5,6 +5,8 @@ import { Store } from './store.mjs';
 import { createApi } from './api.mjs';
 import { createHttpServer } from './http.mjs';
 import { AdminAuth } from './adminAuth.mjs';
+import { AccountAuth } from './accountAuth.mjs';
+import { Commerce } from './commerce.mjs';
 
 const port = Number(process.env.PORT ?? 8787);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('PORT inválido');
@@ -18,12 +20,16 @@ mkdirSync(resourceDir, { recursive: true });
 const store = new Store(dbPath);
 const origin = process.env.COSMETICS_ORIGIN || `http://127.0.0.1:${port}`;
 const adminAuth = new AdminAuth({ store, bootstrapToken: adminToken });
+const accountAuth = new AccountAuth({ store });
+const commerce = new Commerce(store);
 const publicDir = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'public');
 // Premium is secure-by-default. Setting the flag to false can temporarily stop
 // premium login during an incident, but never enables an offline UUID bypass.
 const premiumEnabled = process.env.COSMETICS_ENABLE_PREMIUM !== 'false';
-const api = createApi({ store, adminToken, adminAuth, resourceDir, origin, premiumEnabled });
-const server = createHttpServer(api, origin, publicDir);
+const api = createApi({ store, adminToken, adminAuth, accountAuth, commerce, resourceDir, origin, premiumEnabled });
+const server = createHttpServer(api, origin, publicDir, {
+  trustRailwayProxy: !!process.env.RAILWAY_ENVIRONMENT_ID,
+});
 const host = process.env.HOST || '127.0.0.1';
 server.listen(port, host, () => console.log(`MineLatino Cosmetics API: http://${host}:${port}`));
 let closing = false;

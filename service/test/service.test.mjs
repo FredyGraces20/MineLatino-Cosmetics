@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { Store, validateMenu, DEFAULT_MENU } from '../src/store.mjs';
 import { PlayerAuth, verifyMojang } from '../src/auth.mjs';
 import { AdminAuth } from '../src/adminAuth.mjs';
+import { AccountAuth } from '../src/accountAuth.mjs';
 import { createApi } from '../src/api.mjs';
 import { createHttpServer } from '../src/http.mjs';
 import { DatabaseSync } from 'node:sqlite';
@@ -110,7 +111,8 @@ function fixture(t, options = {}) {
   const store = new Store(); t.after(() => store.close());
   const auth = new PlayerAuth({ verify: async () => ({ uuid: OWNER, name: 'TestPlayer' }) });
   const adminAuth = new AdminAuth({ store, bootstrapToken: ADMIN });
-  const api = createApi({ store, adminToken: ADMIN, adminAuth, playerAuth: auth, premiumEnabled: true, ...options });
+  const accountAuth = new AccountAuth({ store });
+  const api = createApi({ store, adminToken: ADMIN, adminAuth, accountAuth, playerAuth: auth, premiumEnabled: true, ...options });
   const request = async (path, { method = 'GET', data, token, headers = {} } = {}) => {
     const response = await api(new Request(`http://127.0.0.1:8787${path}`, { method,
       headers: { ...(data !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...headers },
@@ -123,8 +125,64 @@ function fixture(t, options = {}) {
     const session = await request('/v1/auth/verify', { method: 'POST', data: { challengeId: challenge.data.challengeId } });
     assert.equal(session.status, 200); return session.data.token;
   };
-  return { store, auth, api, request, login };
+  return { store, auth, accountAuth, api, request, login };
 }
+
+test('MineLatino accounts support duplicate nicks without sharing cosmetics', async t => {
+  const { store, request } = fixture(t);
+  store.saveCosmetic('cape', catalog, 'admin');
+  const first = await request('/v1/account/register', { method: 'POST', data: {
+    email: 'uno@example.com', password: 'correct-horse-1', nick: 'MismoNick',
+  }});
+  const second = await request('/v1/account/register', { method: 'POST', data: {
+    email: 'dos@example.com', password: 'correct-horse-2', nick: 'MismoNick',
+  }});
+  assert.equal(first.status, 201); assert.equal(second.status, 201);
+  assert.notEqual(first.data.account.accountId, second.data.account.accountId);
+  store.accountEntitlement({ accountId: first.data.account.accountId, cosmeticId: 'cape' }, true, 'test');
+  assert.equal((await request('/v1/account/wardrobe', { token: first.data.token })).data.owned.length, 1);
+  assert.equal((await request('/v1/account/wardrobe', { token: second.data.token })).data.owned.length, 0);
+});
+
+test('game token equips and publishes account cosmetics for offline identities', async t => {
+  const { store, request } = fixture(t);
+  store.saveCosmetic('cape', catalog, 'admin');
+  const registered = await request('/v1/account/register', { method: 'POST', data: {
+    email: 'offline@example.com', password: 'correct-horse-3', nick: 'OfflineUser',
+  }});
+  store.accountEntitlement({ accountId: registered.data.account.accountId, cosmeticId: 'cape' }, true, 'test');
+  const game = await request('/v1/account/game-token', { method: 'POST', token: registered.data.token, data: {} });
+  assert.equal(game.status, 201); assert.equal(game.data.scope, 'game');
+  assert.equal((await request('/v1/account/me', { token: game.data.token })).status, 403);
+  assert.deepEqual((await request('/v1/account/session', { token: game.data.token })).data.account,
+    { accountId: registered.data.account.accountId, nick: 'OfflineUser', status: 'active' });
+  assert.equal((await request('/v1/account/equipment', { method: 'PUT', token: game.data.token,
+    data: { slot: 'CAPE', cosmeticId: 'cape' } })).status, 200);
+  assert.equal((await request('/v1/account/presence', { method: 'POST', token: game.data.token,
+    data: { uuid: OTHER, name: 'OfflineUser' } })).status, 200);
+  const appearance = await request(`/v1/cosmetics/appearance?uuids=${OTHER}&names=OfflineUser`);
+  assert.equal(appearance.data.identityMode, 'minelatino-account');
+  assert.deepEqual(appearance.data.players[0].equipped, [{ slot: 'CAPE', cosmeticId: 'cape' }]);
+});
+
+test('player accounts can update themselves and administrators can suspend or delete them', async t => {
+  const { request } = fixture(t);
+  const registered = await request('/v1/account/register', { method: 'POST', data: {
+    email: 'manage@example.com', password: 'correct-horse-4', nick: 'ManageMe',
+  }});
+  const accountId = registered.data.account.accountId;
+  const edited = await request('/v1/account/me', { method: 'PATCH', token: registered.data.token,
+    data: { nick: 'EditedNick' } });
+  assert.equal(edited.data.account.nick, 'EditedNick');
+  const listed = await request('/v1/admin/player-accounts?q=edited', { token: ADMIN });
+  assert.equal(listed.data.items[0].accountId, accountId);
+  const suspended = await request(`/v1/admin/player-accounts/${accountId}`, { method: 'PATCH', token: ADMIN,
+    data: { status: 'suspended' } });
+  assert.equal(suspended.data.account.status, 'suspended');
+  assert.equal((await request('/v1/account/me', { token: registered.data.token })).status, 401);
+  const deleted = await request(`/v1/admin/player-accounts/${accountId}`, { method: 'DELETE', token: ADMIN });
+  assert.equal(deleted.data.account.status, 'deleted');
+});
 
 test('administrative reads and writes require admin authorization', async t => {
   const { request, login } = fixture(t);
@@ -135,12 +193,13 @@ test('administrative reads and writes require admin authorization', async t => {
 });
 test('catalog preserves ownership across edits and rejects stale revisions', async t => {
   const { store, request } = fixture(t);
-  assert.equal((await request('/v1/admin/cosmetics/catalog/cape', { token: ADMIN, method: 'PUT', data: catalog })).status, 200);
+  const draft = { ...catalog, status: 'draft' };
+  assert.equal((await request('/v1/admin/cosmetics/catalog/cape', { token: ADMIN, method: 'PUT', data: draft })).status, 200);
   store.entitlement(grant, true, 'admin');
-  const edited = await request('/v1/admin/cosmetics/catalog/cape', { token: ADMIN, method: 'PUT', data: { ...catalog, name: 'Nueva capa', expectedRevision: 1 } });
+  const edited = await request('/v1/admin/cosmetics/catalog/cape', { token: ADMIN, method: 'PUT', data: { ...draft, name: 'Nueva capa', expectedRevision: 1 } });
   assert.equal(edited.data.revision, 2);
   assert.equal(store.wardrobe(OWNER).owned[0].name, 'Nueva capa');
-  assert.equal((await request('/v1/admin/cosmetics/catalog/cape', { token: ADMIN, method: 'PUT', data: catalog })).status, 409);
+  assert.equal((await request('/v1/admin/cosmetics/catalog/cape', { token: ADMIN, method: 'PUT', data: draft })).status, 409);
   assert.equal(store.auditPage().length, 3);
 });
 test('duplicate operation references cannot regrant a revoked item', t => {
@@ -178,7 +237,7 @@ test('public responses do not expose owners or purchase records', async t => {
   const publicCatalog = await request('/v1/cosmetics/catalog');
   assert.equal(JSON.stringify(publicCatalog.data).includes(OWNER), false);
   const appearance = await request(`/v1/cosmetics/appearance?uuids=${OWNER}`);
-  assert.deepEqual(Object.keys(appearance.data.players[0]).sort(), ['equipped', 'uuid']);
+  assert.deepEqual(Object.keys(appearance.data.players[0]).sort(), ['equipped', 'name', 'uuid']);
   assert.equal((await request('/v1/admin/cosmetics/owners/cape')).status, 401);
   const owners = await request('/v1/admin/cosmetics/owners/cape', { token: ADMIN });
   assert.equal(owners.data.items[0].uuid, OWNER); assert.equal(owners.data.items[0].verified_at, null);
@@ -188,6 +247,24 @@ test('verified nickname follows UUID without changing ownership', async t => {
   await login(); assert.equal(store.owners('cape')[0].name, 'TestPlayer');
   store.verifiedPlayer(OWNER, 'NewName'); assert.equal(store.owners('cape')[0].name, 'NewName');
   assert.equal(store.wardrobe(OWNER).owned.length, 1);
+});
+test('appearance resolves an offline server UUID through a verified premium nickname', async t => {
+  const { store, request, login } = fixture(t);
+  store.saveCosmetic('cape', catalog, 'admin');
+  store.entitlement(grant, true, 'admin');
+  store.equip(OWNER, 'CAPE', 'cape');
+  await login();
+
+  const appearance = await request(`/v1/cosmetics/appearance?uuids=${OTHER}&names=TestPlayer`);
+  assert.deepEqual(appearance.data.players, [{
+    uuid: OTHER,
+    name: null,
+    equipped: [],
+  }, {
+    uuid: OWNER,
+    name: 'TestPlayer',
+    equipped: [{ slot: 'CAPE', cosmeticId: 'cape' }],
+  }]);
 });
 test('foreign browser origins and invalid media types are rejected', async t => {
   const { request } = fixture(t);
@@ -249,7 +326,9 @@ test('SQLite persists across service restarts', () => {
   try {
     const path = join(directory, 'state.sqlite'); store = new Store(path);
     store.saveCosmetic('cape', catalog, 'admin'); store.entitlement(grant, true, 'admin'); store.close(); store = undefined;
-    store = new Store(path); assert.equal(store.wardrobe(OWNER).owned[0].id, 'cape'); assert.equal(store.auditPage().length, 2);
+    store = new Store(path); assert.equal(store.wardrobe(OWNER).owned[0].id, 'cape');
+    assert.equal(store.cosmetic('cape').status, 'draft');
+    assert.equal(store.auditPage().length, 3);
   } finally { store?.close(); rmSync(directory, { recursive: true }); }
 });
 
@@ -326,11 +405,25 @@ test('real loopback HTTP supports authenticated writes and rejects unauthenticat
   const origin = `http://127.0.0.1:${server.address().port}`;
   const unauthorized = await fetch(`${origin}/v1/admin/cosmetics/catalog`);
   assert.equal(unauthorized.status, 401); await unauthorized.arrayBuffer();
-  const saved = await fetch(`${origin}/v1/admin/cosmetics/catalog/cape`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ADMIN}` }, body: JSON.stringify(catalog) });
+  const saved = await fetch(`${origin}/v1/admin/cosmetics/catalog/cape`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ADMIN}` }, body: JSON.stringify({ ...catalog, status: 'draft' }) });
   assert.equal(saved.status, 200); assert.equal((await saved.json()).id, 'cape');
   const result = await fetch(`${origin}/v1/cosmetics/catalog`);
   assert.equal(result.headers.get('cache-control'), 'no-store');
-  assert.equal((await result.json()).items.length, 1);
+  assert.equal((await result.json()).items.length, 0);
+});
+test('Railway transport trusts only a valid X-Real-IP address', async t => {
+  const seen = [];
+  const server = createHttpServer(async (_request, remoteAddress) => {
+    seen.push(remoteAddress);
+    return Response.json({ ok: true });
+  }, 'http://127.0.0.1:8787', null, { trustRailwayProxy: true });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  await (await fetch(origin, { headers: { 'X-Real-IP': '203.0.113.25' } })).arrayBuffer();
+  await (await fetch(origin, { headers: { 'X-Real-IP': 'not-an-ip' } })).arrayBuffer();
+  assert.equal(seen[0], '203.0.113.25');
+  assert.ok(seen[1] === '127.0.0.1' || seen[1] === '::ffff:127.0.0.1');
 });
 
 // ── Admin auth tests ──────────────────────────────────────────────────
@@ -358,11 +451,19 @@ test('admin session token authorizes admin routes with correct actor', async t =
   const login = await request('/v1/admin/auth/login', { method: 'POST', data: { username: 'admin1', password: 'secure1234' } });
   const sessionToken = login.data.token;
   // Session token can create cosmetics
-  const save = await request('/v1/admin/cosmetics/catalog/cape', { method: 'PUT', data: catalog, token: sessionToken });
+  const save = await request('/v1/admin/cosmetics/catalog/cape', { method: 'PUT', data: { ...catalog, status: 'draft' }, token: sessionToken });
   assert.equal(save.status, 200);
   // Audit records the admin username, not 'local-admin'
   const audit = await request('/v1/admin/audit', { token: sessionToken });
   assert.equal(audit.data.items[0].actor, 'admin1');
+});
+test('publishing requires a texture and succeeds after a resource is uploaded', async t => {
+  const { request, store } = fixture(t);
+  const draft = { ...catalog, status: 'draft' };
+  assert.equal((await request('/v1/admin/cosmetics/catalog/cape', { method: 'PUT', data: draft, token: ADMIN })).status, 200);
+  assert.equal((await request('/v1/admin/cosmetics/catalog/cape', { method: 'PUT', data: { ...catalog, expectedRevision: 1 }, token: ADMIN })).status, 409);
+  store.saveResource('cape', 'cape.png', 'fixture', 8, 'image/png');
+  assert.equal((await request('/v1/admin/cosmetics/catalog/cape', { method: 'PUT', data: { ...catalog, expectedRevision: 1 }, token: ADMIN })).status, 200);
 });
 test('admin logout invalidates the session', async t => {
   const { request } = fixture(t);
