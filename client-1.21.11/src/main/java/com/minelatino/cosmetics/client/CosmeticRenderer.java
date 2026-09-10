@@ -59,7 +59,15 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
         PREVIEW_FRAMES.put(state,frame);
     }
 
-    public static boolean hasReadySkin(AvatarRenderState state){UUID uuid=ENTITY_UUID_MAP.get(state.id);if(Minecraft.getInstance().player!=null&&Minecraft.getInstance().player.getId()==state.id&&CosmeticsClient.instance().auth().isConnected()&&CosmeticsClient.instance().auth().session()!=null)try{uuid=UUID.fromString(formatUuid(CosmeticsClient.instance().auth().session().uuid()));}catch(IllegalArgumentException ignored){}if(uuid==null)return false;for(var item:CosmeticsClient.instance().equipment().get(uuid.toString()))if("SKIN".equals(item.slot())){var resource=CosmeticsClient.instance().resources().getOrDownload(item.cosmeticId());return resource!=null&&resource.avatar()!=null;}return false;}
+    public static boolean hasReadySkin(AvatarRenderState state){List<EquipmentCache.EquippedItem> equipped=equipmentFor(state);if(equipped==null)return false;for(var item:equipped)if("SKIN".equals(item.slot())){var resource=CosmeticsClient.instance().resources().getOrDownload(item.cosmeticId());return resource!=null&&resource.avatar()!=null;}return false;}
+
+    private static List<EquipmentCache.EquippedItem> equipmentFor(AvatarRenderState state){
+        CosmeticPreview.Frame preview=PREVIEW_FRAMES.get(state);
+        if(preview!=null)return preview.items;
+        UUID uuid=ENTITY_UUID_MAP.get(state.id);
+        if(Minecraft.getInstance().player!=null&&Minecraft.getInstance().player.getId()==state.id&&CosmeticsClient.instance().auth().isConnected()&&CosmeticsClient.instance().auth().session()!=null)try{uuid=UUID.fromString(formatUuid(CosmeticsClient.instance().auth().session().uuid()));}catch(IllegalArgumentException ignored){}
+        return uuid==null?null:CosmeticsClient.instance().equipment().get(uuid.toString());
+    }
 
     @Override
     public void submit(PoseStack poseStack, SubmitNodeCollector collector, int packedLight,
@@ -105,7 +113,13 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
             if (res == null || res.texture() == null) { pendingResources++; continue; }
 
             if ("SKIN".equals(item.slot())) {
-                if(res.avatar()!=null){renderAvatar(poseStack,collector,packedLight,renderState,res);submitted++;}else pendingResources++;
+                if(res.avatar()!=null){
+                    // 1.21.11 defers submitted model nodes. Force the shared parent
+                    // model invisible here as a second guard in case another layer
+                    // changed visibility after PlayerModel.setupAnim.
+                    getParentModel().setAllVisible(false);
+                    renderAvatar(poseStack,collector,packedLight,renderState,res);submitted++;
+                }else pendingResources++;
                 continue;
             }
 
@@ -122,7 +136,7 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
                 " resourcesUnavailable="+pendingResources+" unsupportedSlots="+unsupported);
     }
 
-    private void renderAvatar(PoseStack stack,SubmitNodeCollector collector,int light,AvatarRenderState state,ResourceCache.CachedResource resource){AvatarPackage avatar=resource.avatar();String clip=AvatarEmoteState.clip(state.id);double seconds=AvatarEmoteState.seconds(state.id);if(clip==null){clip=movementClip(avatar.animations(),state);seconds=state.ageInTicks/20.0;}stack.pushPose();try{stack.translate(0,1.5,0);stack.scale(1,-1,-1);for(AvatarModel.Bone root:avatar.model().roots())renderAvatarBone(stack,collector,light,resource.texture(),avatar,root,clip,seconds,state.ageInTicks/20.0,state.yRot,state.xRot);}finally{stack.popPose();}}
+    private void renderAvatar(PoseStack stack,SubmitNodeCollector collector,int light,AvatarRenderState state,ResourceCache.CachedResource resource){AvatarPackage avatar=resource.avatar();String clip=AvatarEmoteState.clip(state.id);double seconds=AvatarEmoteState.seconds(state.id);if(clip==null){clip=movementClip(avatar.animations(),state);seconds=state.ageInTicks/20.0;}stack.pushPose();try{stack.translate(0,1.5,0);stack.scale(-1,-1,1);for(AvatarModel.Bone root:avatar.model().roots())renderAvatarBone(stack,collector,light,resource.texture(),avatar,root,clip,seconds,state.ageInTicks/20.0,state.yRot,state.xRot);}finally{stack.popPose();}}
     private static String movementClip(AvatarAnimation animations,AvatarRenderState state){List<String>candidates=state.deathTime>0?List.of("death"):state.isUsingItem?List.of("use_mainhand","use_offhand"):state.attackTime>0?List.of("swing_hand"):state.isFallFlying?List.of("elytra_fly","fly"):state.isVisuallySwimming?List.of("swim"):state.isPassenger?List.of("ride","sit"):state.isCrouching?List.of(state.walkAnimationSpeed>.02f?"sneak":"sneaking"):state.walkAnimationSpeed>.75f?List.of("run","walk"):state.walkAnimationSpeed>.02f?List.of("walk","run"):List.of("idle");for(String c:candidates)for(String n:animations.names())if(n.equals(c)||n.endsWith("."+c))return n;return null;}
     private static void renderAvatarBone(PoseStack stack,SubmitNodeCollector collector,int light,Identifier texture,AvatarPackage avatar,AvatarModel.Bone bone,String clip,double seconds,double ambientSeconds,float headYaw,float headPitch){AvatarAnimation.Pose a=avatar.animations().sampleLayered(clip,bone.name(),seconds,ambientSeconds,headYaw,headPitch);float[]p=bone.pivot(),r=bone.rotation(),ar=a.rotation();stack.pushPose();try{stack.translate((p[0]+a.position()[0])/16.0,(p[1]+a.position()[1])/16.0,(p[2]+a.position()[2])/16.0);stack.mulPose(new Quaternionf().rotationZYX((float)Math.toRadians(-(r[2]+ar[2])),(float)Math.toRadians(-(r[1]+ar[1])),(float)Math.toRadians(r[0]+ar[0])));stack.scale(a.scale()[0],a.scale()[1],a.scale()[2]);stack.translate(-p[0]/16.0,-p[1]/16.0,-p[2]/16.0);for(AvatarModel.Cube cube:bone.cubes())renderAvatarCube(stack,collector,light,texture,avatar.model(),cube);for(AvatarModel.Bone child:avatar.model().children(bone.name()))renderAvatarBone(stack,collector,light,texture,avatar,child,clip,seconds,ambientSeconds,headYaw,headPitch);}finally{stack.popPose();}}
     private static void renderAvatarCube(PoseStack stack,SubmitNodeCollector collector,int light,Identifier texture,AvatarModel model,AvatarModel.Cube cube){stack.pushPose();try{float[]p=cube.pivot(),r=cube.rotation();stack.translate(p[0]/16.0,p[1]/16.0,p[2]/16.0);stack.mulPose(new Quaternionf().rotationZYX((float)Math.toRadians(-r[2]),(float)Math.toRadians(-r[1]),(float)Math.toRadians(r[0])));stack.translate(-p[0]/16.0,-p[1]/16.0,-p[2]/16.0);float x1=cube.origin()[0]/16,y1=cube.origin()[1]/16,z1=cube.origin()[2]/16,x2=(cube.origin()[0]+cube.size()[0])/16,y2=(cube.origin()[1]+cube.size()[1])/16,z2=(cube.origin()[2]+cube.size()[2])/16;for(var face:cube.faces().entrySet()){float[][]v=switch(face.getKey()){case"north"->new float[][]{{x2,y2,z1},{x2,y1,z1},{x1,y1,z1},{x1,y2,z1}};case"south"->new float[][]{{x1,y2,z2},{x1,y1,z2},{x2,y1,z2},{x2,y2,z2}};case"east"->new float[][]{{x2,y2,z2},{x2,y1,z2},{x2,y1,z1},{x2,y2,z1}};case"west"->new float[][]{{x1,y2,z1},{x1,y1,z1},{x1,y1,z2},{x1,y2,z2}};case"up"->new float[][]{{x1,y2,z1},{x1,y2,z2},{x2,y2,z2},{x2,y2,z1}};default->new float[][]{{x1,y1,z2},{x1,y1,z1},{x2,y1,z1},{x2,y1,z2}};};AvatarModel.Face uv=face.getValue();float u1=uv.u()/model.textureWidth(),vv1=uv.v()/model.textureHeight(),u2=(uv.u()+uv.width())/model.textureWidth(),v2=(uv.v()+uv.height())/model.textureHeight();float[]n=normal(v);float[][]vertices={{v[0][0],v[0][1],v[0][2],u1,vv1},{v[1][0],v[1][1],v[1][2],u1,v2},{v[2][0],v[2][1],v[2][2],u2,v2},{v[3][0],v[3][1],v[3][2],u2,vv1}};collector.submitCustomGeometry(stack,RenderTypes.entityCutoutNoCull(texture),(pose,consumer)->{for(float[]vertex:vertices)addVertex(consumer,pose,vertex,light,n);});}}finally{stack.popPose();}}

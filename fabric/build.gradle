@@ -1,5 +1,13 @@
 plugins { id 'fabric-loom' version '1.9.2' }
 
+loom {
+    mixin {
+        // Keep the generated refmap name aligned with the mixin configuration.
+        // Static refmaps become stale as soon as a selector or MC mapping changes.
+        defaultRefmapName = 'minelatino_cosmetics.refmap.json'
+    }
+}
+
 def mcVersion = project.findProperty('mcVersion') ?: '1.21.4'
 def props = new Properties()
 file('../versions.properties').withInputStream { props.load(it) }

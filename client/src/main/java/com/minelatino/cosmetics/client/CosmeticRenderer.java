@@ -144,8 +144,10 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
         if(clip==null){clip=movementClip(avatar.animations(),state);seconds=state.ageInTicks/20.0;}
         VertexConsumer consumer=buffers.getBuffer(RenderType.entityCutoutNoCull(resource.texture()));
         stack.pushPose();try{
-            // Bedrock geometry uses pixels, Y-up and forward -Z, anchored at the feet.
-            stack.translate(0,1.5,0);stack.scale(1,-1,-1);
+            // Bedrock/Gecko geometry uses pixels, Y-up and +Z forward. Mirror X and
+            // Y to enter Minecraft's model space; flipping Z here turns the entire
+            // avatar around and makes it face backwards relative to the player.
+            stack.translate(0,1.5,0);stack.scale(-1,-1,1);
             for(AvatarModel.Bone root:avatar.model().roots())renderAvatarBone(stack,consumer,light,avatar,root,clip,seconds,state.ageInTicks/20.0,state.yRot,state.xRot);
         }finally{stack.popPose();}
     }
