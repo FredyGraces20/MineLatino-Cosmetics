@@ -15,6 +15,11 @@ function editor() {
   vm.runInContext(readFileSync(new URL('../public/cosmetic-editor.js', import.meta.url), 'utf8'), context);
   return context.MineLatinoCosmeticEditor;
 }
+function afkTiming() {
+  const context = vm.createContext({});
+  vm.runInContext(readFileSync(new URL('../public/afk-timing.js', import.meta.url), 'utf8'), context);
+  return context.MineLatinoAfkTiming;
+}
 const model = {
   texture_size: [128, 128], textures: { main: 'pack/main', bubbles: 'pack/bubbles' },
   elements: [{ from: [0,0,0], to: [16,16,16], faces: {
@@ -69,7 +74,7 @@ test('admin inline scripts remain syntactically valid', () => {
 
 test('redesigned admin separates catalog, product data and 3D resources', () => {
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  for (const id of ['tab-catalog', 'tab-details', 'tab-resources', 'tab-grant', 'tab-players', 'tab-menu', 'tab-audit'])
+  for (const id of ['tab-catalog', 'tab-details', 'tab-resources', 'tab-grant', 'tab-players', 'tab-menu', 'tab-afk', 'tab-audit'])
     assert.equal([...html.matchAll(new RegExp(`id="${id}"`, 'g'))].length, 1, `${id} must be unique`);
   assert(html.includes('class="sidebar"'));
   assert(html.includes('href="admin.css"'));
@@ -86,6 +91,16 @@ test('redesigned admin separates catalog, product data and 3D resources', () => 
   assert(html.includes('BBMODEL convertido'));
   assert(html.includes("grantItems=items.filter(i=>i.status!=='retired')"), 'draft cosmetics must remain assignable for testing');
   assert(html.includes('Podrá equiparse cuando publiques el producto.'));
+  assert(html.includes('function buildAfkTimingPlan()'));
+  assert(html.includes('src="afk-timing.js"'));
+});
+
+test('AFK web simulator mirrors post-join, between-command and movement delays', () => {
+  const plan = afkTiming().build({ commands: '/warp granja\nhome animales', postJoin: 8, between: 4, movement: 12 });
+  assert.deepEqual(Array.from(plan.events, event => [event.at, event.kind]), [[0, 'world'], [8, 'command'], [12, 'command'], [24, 'movement']]);
+  assert.equal(plan.total, 24);
+  assert.throws(() => afkTiming().build({ commands: '', postJoin: 301, between: 0, movement: 0 }), /0 y 300/);
+  assert.throws(() => afkTiming().build({ commands: Array(11).fill('say test'), postJoin: 0, between: 0, movement: 0 }), /10 comandos/);
 });
 
 test('admin assignments use MineLatino accounts instead of legacy Minecraft UUID grants', () => {

@@ -274,6 +274,14 @@ td code { color: #9cabbc; font-family: ui-monospace, SFMono-Regular, Consolas, m
 .danger-card { border-color: rgba(255,112,124,.13); }
 .code-editor { min-height: 360px; padding: 16px; font: 13px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; tab-size: 2; }
 .empty-note { padding: 38px 20px; color: var(--dm); text-align: center; }
+.afk-live { min-height: 76px; margin-bottom: 18px; padding: 16px 18px; display: flex; flex-direction: column; justify-content: center; gap: 5px; border: 1px solid rgba(56,216,242,.2); border-radius: 13px; background: linear-gradient(135deg,rgba(56,216,242,.09),rgba(108,185,255,.04)); color: var(--dm); font-size: 13px; }
+.afk-live strong { color: var(--tx); font-size: 15px; }
+.afk-live span { color: var(--ac); font-variant-numeric: tabular-nums; }
+.afk-timeline { display: grid; gap: 8px; }
+.afk-step { min-height: 44px; padding: 9px 12px; display: grid; grid-template-columns: 58px minmax(0,1fr); align-items: center; gap: 10px; border: 1px solid var(--bd); border-radius: 10px; background: rgba(5,9,15,.42); color: #9ba7b7; font-size: 13px; transition: border-color .2s,background .2s,color .2s; }
+.afk-step.active { border-color: rgba(56,216,242,.42); background: rgba(56,216,242,.07); color: var(--tx); }
+.afk-step.done { border-color: rgba(84,223,179,.16); color: #718092; }
+.afk-time { color: var(--ac); font: 700 12px/1 ui-monospace,SFMono-Regular,Consolas,monospace; font-variant-numeric: tabular-nums; }
 
 /* 3D editor keeps the same behavior with a cleaner shell */
 .ed-overlay { background: #080b12; }
