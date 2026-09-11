@@ -58,6 +58,8 @@ class WardrobeControllerTest {
         EquipmentCache cache=new EquipmentCache(null);
         cache.setEquipped(UUID,List.of(new EquipmentCache.EquippedItem("SKIN","old-skin"),new EquipmentCache.EquippedItem("HAT","hat")));
         assertEquals(List.of(new EquipmentCache.EquippedItem("HAT","hat")),cache.get(UUID));
+        assertTrue(cache.hasEquippedSlot(UUID,"HAT"));
+        assertFalse(cache.hasEquippedSlot(UUID,"CAPE"));
     }
     @Test void doubleClickAndResizeCannotStartAnotherWrite() {
         load(); assertTrue(controller.equip("HAT","hat"));

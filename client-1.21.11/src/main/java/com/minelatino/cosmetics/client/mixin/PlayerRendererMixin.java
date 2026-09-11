@@ -40,6 +40,7 @@ public abstract class PlayerRendererMixin {
     private void minelatino$captureUuid(net.minecraft.world.entity.Avatar avatar, AvatarRenderState state, float partialTick, CallbackInfo ci) {
         if (avatar instanceof AbstractClientPlayer player) {
             CosmeticRenderer.putEntityUuid(state.id, player.getGameProfile().id());
+            if (CosmeticRenderer.shouldSuppressVanillaCape(state.id)) state.showCape = false;
         }
     }
 }

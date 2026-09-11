@@ -48,6 +48,12 @@ public final class EquipmentCache {
         return entry.items;
     }
 
+    /** Returns whether the cached appearance currently occupies a cosmetic slot. */
+    public boolean hasEquippedSlot(String uuid, String slot) {
+        if (slot == null) return false;
+        return get(uuid).stream().anyMatch(item -> slot.equals(item.slot()));
+    }
+
     /**
      * Fetches appearances for the given UUIDs in a single batch request.
      * Skips UUIDs that are already cached and not expired.

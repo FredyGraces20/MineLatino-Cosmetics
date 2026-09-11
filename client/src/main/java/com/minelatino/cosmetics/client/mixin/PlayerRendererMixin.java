@@ -41,5 +41,6 @@ public abstract class PlayerRendererMixin {
     private void minelatino$captureUuid(AbstractClientPlayer player, PlayerRenderState state, float partialTick, CallbackInfo ci) {
         // Store UUID without hyphens to match backend format
         CosmeticRenderer.putEntityUuid(state.id, player.getGameProfile().getId());
+        if (CosmeticRenderer.shouldSuppressVanillaCape(state.id)) state.showCape = false;
     }
 }

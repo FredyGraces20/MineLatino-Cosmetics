@@ -13,6 +13,9 @@ import net.minecraftforge.client.event.EntityRenderersEvent;
 import net.minecraftforge.eventbus.api.listener.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
+import java.lang.reflect.Field;
+import java.util.List;
+
 @Mod.EventBusSubscriber(modid = "minelatino_cosmetics", value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.MOD)
 public final class ClientModEvents {
     private ClientModEvents() {}
@@ -28,13 +31,30 @@ public final class ClientModEvents {
                 CosmeticRenderer layer = new CosmeticRenderer(
                         (RenderLayerParent<AvatarRenderState, PlayerModel>) (RenderLayerParent) renderer,
                         cache);
-                renderer.addLayer(layer);
+                addLayerFirst(renderer, layer);
                 org.slf4j.LoggerFactory.getLogger("MineLatino Cosmetics")
-                        .info("Forge: cosmetic layer added for player model {}", modelType);
+                        .info("Forge: cosmetic layer added before built-in cape layers for player model {}", modelType);
             } catch (Exception error) {
                 org.slf4j.LoggerFactory.getLogger("MineLatino Cosmetics")
                         .error("Failed to add cosmetic layer for player model {}", modelType, error);
             }
         }
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static void addLayerFirst(AvatarRenderer renderer, CosmeticRenderer layer) throws Exception {
+        Class<?> type = renderer.getClass();
+        Field layersField = null;
+        while (type != null) {
+            try {
+                layersField = type.getDeclaredField("layers");
+                break;
+            } catch (NoSuchFieldException ignored) {
+                type = type.getSuperclass();
+            }
+        }
+        if (layersField == null) throw new NoSuchFieldException("layers");
+        layersField.setAccessible(true);
+        ((List) layersField.get(renderer)).add(0, layer);
     }
 }

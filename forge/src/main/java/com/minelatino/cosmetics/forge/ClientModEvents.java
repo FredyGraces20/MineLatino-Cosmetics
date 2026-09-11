@@ -63,8 +63,10 @@ public final class ClientModEvents {
 
         layersField.setAccessible(true);
         List layers = (List) layersField.get(renderer);
-        layers.add(layer);
+        // Run before Minecraft's CapeLayer (also patched by OptiFine), so the
+        // MineLatino layer can hide it when our CAPE slot is occupied.
+        layers.add(0, layer);
         org.slf4j.LoggerFactory.getLogger("MineLatino Cosmetics")
-                .info("Forge: CosmeticRenderer layer added for player renderer");
+                .info("Forge: CosmeticRenderer layer added before built-in cape layers");
     }
 }

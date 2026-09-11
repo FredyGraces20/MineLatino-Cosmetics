@@ -52,6 +52,7 @@ public final class CosmeticPreview {
             renderState.lightCoords=0x00F000F0;
             renderState.shadowPieces.clear();
             renderState.outlineColor=0;
+            if (equipment.stream().anyMatch(item -> "CAPE".equals(item.slot()))) renderState.showCape=false;
             CosmeticRenderer.registerPreview(renderState,frame);
             previousFrame=frame;
             g.submitEntityRenderState(renderState, scale,

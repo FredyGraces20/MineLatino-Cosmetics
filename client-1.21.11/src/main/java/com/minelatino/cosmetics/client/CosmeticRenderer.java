@@ -55,6 +55,21 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
         ENTITY_UUID_MAP.put(entityId, uuid);
     }
 
+    /** True only while this entity has a MineLatino cape selected. */
+    public static boolean shouldSuppressVanillaCape(int entityId) {
+        UUID uuid = ENTITY_UUID_MAP.get(entityId);
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player != null && minecraft.player.getId() == entityId
+                && CosmeticsClient.instance().auth().isConnected()
+                && CosmeticsClient.instance().auth().session() != null) {
+            try {
+                uuid = UUID.fromString(formatUuid(CosmeticsClient.instance().auth().session().uuid()));
+            } catch (IllegalArgumentException ignored) {}
+        }
+        return uuid != null && CosmeticsClient.instance().equipment()
+                .hasEquippedSlot(uuid.toString(), "CAPE");
+    }
+
     static void registerPreview(AvatarRenderState state, CosmeticPreview.Frame frame) {
         PREVIEW_FRAMES.put(state,frame);
     }
@@ -63,6 +78,7 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
     public void submit(PoseStack poseStack, SubmitNodeCollector collector, int packedLight,
                        AvatarRenderState renderState, float yaw, float partialTick) {
         renderCallCount++;
+        if (shouldSuppressVanillaCape(renderState.id)) renderState.showCape = false;
         boolean local=Minecraft.getInstance().player!=null && Minecraft.getInstance().player.getId()==renderState.id;
         if (renderState.isInvisible || renderState.isSpectator) {
             if(local) CosmeticsDiagnostics.changed("WORLD_RENDER","skipped invisible="+renderState.isInvisible+" spectator="+renderState.isSpectator);
