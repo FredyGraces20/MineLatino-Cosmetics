@@ -7,9 +7,13 @@ import java.util.Deque;
 public final class ClickTracker {
     private static final Deque<Long> LEFT = new ArrayDeque<>();
     private static final Deque<Long> RIGHT = new ArrayDeque<>();
+    private static boolean leftDown;
+    private static boolean rightDown;
     private ClickTracker() {}
 
     public static synchronized void press(int button, int action) {
+        if (button == 0) leftDown = action == 1;
+        if (button == 1) rightDown = action == 1;
         if (action != 1 || (button != 0 && button != 1)) return;
         long now = System.currentTimeMillis();
         (button == 0 ? LEFT : RIGHT).addLast(now);
@@ -25,6 +29,9 @@ public final class ClickTracker {
         prune(System.currentTimeMillis());
         return RIGHT.size();
     }
+
+    public static synchronized boolean leftDown() { return leftDown; }
+    public static synchronized boolean rightDown() { return rightDown; }
 
     private static void prune(long now) {
         while (!LEFT.isEmpty() && now - LEFT.peekFirst() >= 1_000) LEFT.removeFirst();

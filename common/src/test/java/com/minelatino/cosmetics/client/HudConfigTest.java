@@ -29,6 +29,8 @@ final class HudConfigTest {
         assertTrue(json.contains("\"x\": 84"));
         assertTrue(config.widget(HudConfig.CPS).enabled());
         assertEquals(37, config.widget(HudConfig.CPS).y());
+        assertTrue(config.widget(HudConfig.COMPASS).enabled());
+        assertFalse(config.widget(HudConfig.INPUT).enabled());
     }
 
     @Test
@@ -43,5 +45,19 @@ final class HudConfigTest {
         config.reset();
         assertTrue(config.widget(HudConfig.FPS).enabled());
         assertEquals(8, config.widget(HudConfig.FPS).x());
+    }
+
+    @Test
+    void persistsOrientationAndBackgroundChoice() {
+        HudConfig config = HudConfig.get(temporaryDirectory.resolve("appearance"));
+        assertEquals(HudConfig.HORIZONTAL, config.widget(HudConfig.ARMOR).layout());
+        int initialBackground = config.widget(HudConfig.ARMOR).background();
+
+        config.toggleLayout(HudConfig.ARMOR);
+        config.nextBackground(HudConfig.ARMOR);
+
+        assertEquals(HudConfig.VERTICAL, config.widget(HudConfig.ARMOR).layout());
+        assertTrue(config.widget(HudConfig.ARMOR).background() != initialBackground);
+        assertFalse(HudConfig.backgroundName(config.widget(HudConfig.ARMOR).background()).isBlank());
     }
 }
