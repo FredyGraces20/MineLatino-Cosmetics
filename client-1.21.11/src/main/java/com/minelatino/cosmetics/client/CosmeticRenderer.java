@@ -2,6 +2,7 @@ package com.minelatino.cosmetics.client;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import net.minecraft.client.model.Model;
 import net.minecraft.client.model.player.PlayerModel;
 import net.minecraft.client.model.player.PlayerCapeModel;
 import net.minecraft.client.model.geom.ModelPart;
@@ -16,6 +17,7 @@ import org.joml.Quaternionf;
 import net.minecraft.client.renderer.entity.state.AvatarRenderState;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.Identifier;
+import net.minecraft.util.Unit;
 import org.joml.Vector3f;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,7 +57,7 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
      * regular model pipeline. Entries are weakly keyed by the downloaded model and
      * contain at most one part per texture/animation frame.
      */
-    private static final Map<CosmeticModel, Map<String, ModelPart>> PREVIEW_PARTS =
+    private static final Map<CosmeticModel, Map<String, Model.Simple>> PREVIEW_MODELS =
             Collections.synchronizedMap(new WeakHashMap<>());
     private static int renderCallCount = 0;
     private final ResourceCache resourceCache;
@@ -229,10 +231,13 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
                 List<CosmeticModel.Quad> quads = List.copyOf(batch.getValue());
                 if (previewRender) {
                     int frame = animationFrames.getOrDefault(batch.getKey(), -1);
-                    ModelPart part = previewPart(model, batch.getKey(), frame, quads);
-                    collector.submitModelPart(part, poseStack, RenderTypes.entityCutout(batch.getKey()),
-                            packedLight, OverlayTexture.NO_OVERLAY, null,
-                            false, false, -1, null, 0xFFFFFFFF);
+                    Model.Simple previewModel = previewModel(model, batch.getKey(), frame, quads);
+                    // Use the same feature pipeline as the player skin. The standalone
+                    // ModelPart queue is not reliably included by optimized GUI PIP
+                    // renderers, while Model submissions are the native entity path.
+                    collector.submitModel(previewModel, Unit.INSTANCE, poseStack,
+                            RenderTypes.entityCutoutNoCull(batch.getKey()), packedLight,
+                            OverlayTexture.NO_OVERLAY, -1, null, 0, null);
                 } else {
                     collector.submitCustomGeometry(poseStack, RenderTypes.entityCutout(batch.getKey()), (pose, consumer) -> {
                         for (CosmeticModel.Quad quad : quads) renderQuad(consumer, pose, packedLight, quad);
@@ -244,12 +249,12 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
         }
     }
 
-    private static ModelPart previewPart(CosmeticModel model, Identifier texture, int frame,
-                                         List<CosmeticModel.Quad> quads) {
+    private static Model.Simple previewModel(CosmeticModel model, Identifier texture, int frame,
+                                             List<CosmeticModel.Quad> quads) {
         String key = texture + "#" + frame;
-        synchronized (PREVIEW_PARTS) {
-            return PREVIEW_PARTS.computeIfAbsent(model, ignored -> new HashMap<>())
-                    .computeIfAbsent(key, ignored -> bakePart(quads));
+        synchronized (PREVIEW_MODELS) {
+            return PREVIEW_MODELS.computeIfAbsent(model, ignored -> new HashMap<>())
+                    .computeIfAbsent(key, ignored -> new Model.Simple(bakePart(quads), RenderTypes::entityCutoutNoCull));
         }
     }
 
@@ -261,12 +266,42 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
                     modelVertex(quad.v0()), modelVertex(quad.v1()),
                     modelVertex(quad.v2()), modelVertex(quad.v3())
             };
-            ModelPart.Cube cube = new ModelPart.Cube(0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, false, 16, 16, Set.of(Direction.NORTH));
+            // A zero-sized placeholder is legal to vanilla's immediate compiler, but
+            // optimized feature pipelines may discard it before reading the replaced
+            // polygon. Give every submitted face a real, non-zero bounding volume.
+            float minX = minCoordinate(vertices, 0), minY = minCoordinate(vertices, 1), minZ = minCoordinate(vertices, 2);
+            float maxX = maxCoordinate(vertices, 0), maxY = maxCoordinate(vertices, 1), maxZ = maxCoordinate(vertices, 2);
+            float epsilon = 1.0F / 1024.0F;
+            if (maxX - minX < epsilon) maxX = minX + epsilon;
+            if (maxY - minY < epsilon) maxY = minY + epsilon;
+            if (maxZ - minZ < epsilon) maxZ = minZ + epsilon;
+            ModelPart.Cube cube = new ModelPart.Cube(0, 0, minX, minY, minZ,
+                    maxX - minX, maxY - minY, maxZ - minZ,
+                    0, 0, 0, false, 16, 16, Set.of(Direction.NORTH));
             cube.polygons[0] = new ModelPart.Polygon(vertices, new Vector3f(quad.normal()));
             cubes.add(cube);
         }
         return new ModelPart(cubes, Map.of());
+    }
+
+    private static float minCoordinate(ModelPart.Vertex[] vertices, int axis) {
+        float value = Float.POSITIVE_INFINITY;
+        for (ModelPart.Vertex vertex : vertices) value = Math.min(value, coordinate(vertex, axis));
+        return value;
+    }
+
+    private static float maxCoordinate(ModelPart.Vertex[] vertices, int axis) {
+        float value = Float.NEGATIVE_INFINITY;
+        for (ModelPart.Vertex vertex : vertices) value = Math.max(value, coordinate(vertex, axis));
+        return value;
+    }
+
+    private static float coordinate(ModelPart.Vertex vertex, int axis) {
+        return switch (axis) {
+            case 0 -> vertex.x();
+            case 1 -> vertex.y();
+            default -> vertex.z();
+        };
     }
 
     private static ModelPart.Vertex modelVertex(float[] vertex) {
