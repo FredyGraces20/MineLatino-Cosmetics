@@ -84,6 +84,8 @@ test('redesigned admin separates catalog, product data and 3D resources', () => 
   assert(html.includes("slot:$('cos-slot').value"));
   assert(html.includes('id="model-file" accept=".json,.bbmodel"'));
   assert(html.includes('BBMODEL convertido'));
+  assert(html.includes("grantItems=items.filter(i=>i.status!=='retired')"), 'draft cosmetics must remain assignable for testing');
+  assert(html.includes('Podrá equiparse cuando publiques el producto.'));
 });
 
 test('admin assignments use MineLatino accounts instead of legacy Minecraft UUID grants', () => {
