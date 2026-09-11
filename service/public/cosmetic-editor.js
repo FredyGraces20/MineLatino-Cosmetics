@@ -13,7 +13,7 @@
     wings: Object.freeze({ position: [0, .3, .16], scale: [1, -1, -1], yaw: Math.PI }),
     // Mirrors CosmeticRenderer: body anchor + (0, .3, .30), Y/Z flip and 180° yaw.
     backpack: Object.freeze({ position: [0, .3, .30], scale: [1, -1, -1], yaw: Math.PI }),
-    // Mirrors the independent companion anchor and base scale in CosmeticRenderer.
+    // Centered Y-up editor equivalent of CosmeticRenderer's Y=-.5 Minecraft anchor.
     pet: Object.freeze({ position: [1.15, 1, 0], scale: [.55, -.55, -.55], yaw: 0 }),
   });
 

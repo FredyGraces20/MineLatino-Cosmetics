@@ -5,11 +5,12 @@ public final class CosmeticPlacement {
     private CosmeticPlacement() {}
 
     /**
-     * Companion anchor in player-model space.  Keep it outside the maximum arm
-     * swing so shoulder-height pets do not appear behind the player's hand.
+     * Companion anchor in Minecraft's player-model space. The web editor uses
+     * a centered, Y-up player, so its Y=1 top anchor maps to Y=-0.5 here where
+     * Y grows down from the model head. Keep X outside the maximum arm swing.
      */
     public static final float PET_X = 1.15f;
-    public static final float PET_Y = 1.0f;
+    public static final float PET_Y = -0.5f;
     public static final float PET_Z = 0.0f;
     public static final float PET_SCALE = 0.55f;
 
