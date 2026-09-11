@@ -3,8 +3,6 @@ package com.minelatino.cosmetics.client;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.LinkedHashMap;
 import java.util.concurrent.CompletableFuture;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
@@ -122,6 +120,10 @@ public final class WardrobeScreen extends Screen {
         var state=controller.snapshot();
         var filtered=state.owned().stream().filter(i->filter==null || i.slot().equals(filter.name()))
                 .filter(i->i.name().toLowerCase(Locale.ROOT).contains(query.toLowerCase(Locale.ROOT))).toList();
+        if(selected()==null && !filtered.isEmpty()) {
+            selectedId=filtered.get(0).id();
+            orbit=List.of("BACKPACK","CAPE","WINGS").contains(filtered.get(0).slot()) ? 180 : -18;
+        }
         rows=Math.max(1,(bottom-top-82)/38);
         pages=Math.max(1,(filtered.size()+rows-1)/rows);
         page=Math.min(page,pages-1);
@@ -174,10 +176,10 @@ public final class WardrobeScreen extends Screen {
         previous.active=page>0; next.active=page<pages-1;
     }
     private List<EquipmentCache.EquippedItem> previewItems() {
-        Map<String,String> items=new LinkedHashMap<>(controller.snapshot().equipped());
         var selection=selected();
-        if(selection!=null && "published".equals(selection.status())) items.put(selection.slot(),selection.id());
-        return items.entrySet().stream().map(e->new EquipmentCache.EquippedItem(e.getKey(),e.getValue())).toList();
+        if(selection==null || !"published".equals(selection.status())) return List.of();
+        // Match the launcher fitting room: one selected product at a time.
+        return List.of(new EquipmentCache.EquippedItem(selection.slot(),selection.id()));
     }
     @Override public void renderBackground(GuiGraphics g,int mx,int my,float delta) {
         // Replace the default blurred background + dirt texture with a clean opaque gradient.
