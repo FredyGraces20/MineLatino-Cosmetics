@@ -14,6 +14,7 @@ import org.joml.Vector3f;
 /** A separate player entity: orbiting the preview never rotates/mutates the actual player.
  *  Ported for 1.21.11: uses submitEntityRenderState instead of InventoryScreen.renderEntityInInventory. */
 public final class CosmeticPreview {
+    private static final int PREVIEW_ENTITY_ID = Integer.MIN_VALUE + 4931;
     static final class Frame {
         final List<EquipmentCache.EquippedItem> items;
         boolean layerVisited;
@@ -34,6 +35,10 @@ public final class CosmeticPreview {
                 @Override public boolean isSpectator() { return false; }
                 @Override public boolean isModelPartShown(PlayerModelPart part) { return mc.player.isModelPartShown(part); }
             };
+            // GUI entity render states are retained in 1.21.11. Give the actor a
+            // stable ID which cannot collide with a real world entity so the
+            // cosmetic layer can recover the corresponding preview frame later.
+            actor.setId(PREVIEW_ENTITY_ID);
             actor.yBodyRot=180; actor.yBodyRotO=180;
             actor.setYRot(180); actor.yRotO=180;
             actor.yHeadRot=180; actor.yHeadRotO=180;
@@ -69,7 +74,6 @@ public final class CosmeticPreview {
             layerAvailable=false;
             CosmeticsDiagnostics.event("PREVIEW_ERROR",CosmeticsDiagnostics.failure(e));
         } finally {
-            CosmeticRenderer.ENTITY_UUID_MAP.remove(actor.getId());
             g.disableScissor();
             g.nextStratum();
         }

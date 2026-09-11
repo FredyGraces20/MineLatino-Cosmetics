@@ -45,8 +45,9 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
     private static final Logger LOG = LoggerFactory.getLogger("MineLatino Cosmetics");
 
     static final Map<Integer, UUID> ENTITY_UUID_MAP = new ConcurrentHashMap<>();
-    private static final Map<AvatarRenderState, CosmeticPreview.Frame> PREVIEW_FRAMES =
-            Collections.synchronizedMap(new WeakHashMap<>());
+    // submitEntityRenderState may retain or copy its state before the PIP pass.
+    // Entity ID is the stable bridge between screen submission and layer render.
+    private static final Map<Integer, CosmeticPreview.Frame> PREVIEW_FRAMES = new ConcurrentHashMap<>();
     /**
      * 1.21.11 renders GUI entities through a picture-in-picture framebuffer. Custom
      * geometry nodes are not isolated reliably by every renderer optimization, so
@@ -87,7 +88,7 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
     }
 
     static void registerPreview(AvatarRenderState state, CosmeticPreview.Frame frame) {
-        PREVIEW_FRAMES.put(state,frame);
+        PREVIEW_FRAMES.put(state.id,frame);
     }
 
     @Override
@@ -101,7 +102,7 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
             return;
         }
 
-        CosmeticPreview.Frame preview = PREVIEW_FRAMES.remove(renderState);
+        CosmeticPreview.Frame preview = PREVIEW_FRAMES.remove(renderState.id);
         List<EquipmentCache.EquippedItem> equipped;
         if (preview != null) {
             preview.layerVisited = true;

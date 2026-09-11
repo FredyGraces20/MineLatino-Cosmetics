@@ -1,7 +1,7 @@
 # Build and optionally publish every supported MineLatino Cosmetics artifact.
 # mods.json is changed only after GitHub confirms that the release exists.
 param(
-    [string]$Version = '0.1.0-alpha.38',
+    [string]$Version = '0.1.0-alpha.39',
     [string[]]$MinecraftVersions = @('1.21.4', '1.21.11'),
     [switch]$SkipBuild,
     [switch]$SkipGithub,
