@@ -9,7 +9,7 @@ import { AdminAuth } from '../src/adminAuth.mjs';
 import { AccountAuth } from '../src/accountAuth.mjs';
 import { createApi } from '../src/api.mjs';
 import { createHttpServer } from '../src/http.mjs';
-import { AiService } from '../src/ai.mjs';
+import { AiService, createAiServiceFromEnv } from '../src/ai.mjs';
 import { AfkUsageService } from '../src/afkUsage.mjs';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -957,6 +957,26 @@ test('AI assistant token is revoked together with its parent MineLatino session'
   await request('/v1/account/logout-all', { method: 'POST', token: registered.data.token, data: {} });
   const result = await request('/v1/ai/status', { token: assistant.data.token });
   assert.equal(result.status, 401);
+});
+
+test('AI assistant supports an HTTPS OpenAI-compatible chat completions endpoint', async t => {
+  const names = ['AI_PROVIDER','AI_API_KEY','AI_MODEL','AI_BASE_URL','AI_API_STYLE'];
+  const previous = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  t.after(() => { for (const name of names) previous[name] === undefined ? delete process.env[name] : process.env[name] = previous[name]; });
+  Object.assign(process.env, { AI_PROVIDER: 'openai-compatible', AI_API_KEY: 'test-only-provider-key',
+    AI_MODEL: 'test-model', AI_BASE_URL: 'https://provider.example/v1', AI_API_STYLE: 'chat-completions' });
+  let request;
+  const { store } = fixture(t);
+  const ai = createAiServiceFromEnv({ store, fetchImpl: async (url, options) => {
+    request = { url, options };
+    return Response.json({ choices: [{ message: { content: 'Respuesta compatible' } }],
+      usage: { prompt_tokens: 7, completion_tokens: 3 } });
+  } });
+  const result = await ai.complete([{ role: 'user', content: 'Hola' }]);
+  assert.equal(request.url, 'https://provider.example/v1/chat/completions');
+  assert.equal(JSON.parse(request.options.body).model, 'test-model');
+  assert.equal(result.content, 'Respuesta compatible');
+  assert.deepEqual(result.usage, { inputTokens: 7, outputTokens: 3 });
 });
 
 test('AFK Farm time is assigned by admin, metered by server time, and blocks at zero', async t => {

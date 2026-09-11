@@ -8,7 +8,7 @@ function integer(value, fallback, minimum, maximum) {
   return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
 }
 
-function providerOutput(payload) {
+function responsesOutput(payload) {
   if (typeof payload?.output_text === 'string' && payload.output_text.trim()) return payload.output_text.trim();
   const parts = Array.isArray(payload?.output) ? payload.output.flatMap(item => Array.isArray(item?.content) ? item.content : []) : [];
   const text = parts.map(part => typeof part?.text === 'string' ? part.text : '').join('').trim();
@@ -16,33 +16,58 @@ function providerOutput(payload) {
   throw new ApiError(502, 'El proveedor de IA devolvió una respuesta inválida');
 }
 
+function chatCompletionsOutput(payload) {
+  const content = payload?.choices?.[0]?.message?.content;
+  if (typeof content === 'string' && content.trim()) return content.trim();
+  if (Array.isArray(content)) {
+    const text = content.map(part => typeof part?.text === 'string' ? part.text : '').join('').trim();
+    if (text) return text;
+  }
+  throw new ApiError(502, 'El proveedor de IA devolvió una respuesta inválida');
+}
+
+function providerBaseUrl(value, provider) {
+  const fallback = provider === 'openai' ? 'https://api.openai.com/v1' : '';
+  requireThat(value || fallback, 'Configura AI_BASE_URL para el proveedor compatible', 500);
+  let url;
+  try { url = new URL(value || fallback); } catch { throw new Error('AI_BASE_URL inválida'); }
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash)
+    throw new Error('AI_BASE_URL debe ser HTTPS y no contener credenciales, query ni fragmento');
+  return url.href.replace(/\/+$/, '');
+}
+
 export function createAiServiceFromEnv({ store, fetchImpl = fetch, now = Date.now } = {}) {
   const provider = String(process.env.AI_PROVIDER || '').trim().toLowerCase();
   const apiKey = String(process.env.AI_API_KEY || '').trim();
   const model = String(process.env.AI_MODEL || '').trim();
   if (!provider || !apiKey || !model) return undefined;
-  if (provider !== 'openai') throw new Error('AI_PROVIDER no admitido; usa openai');
+  if (!['openai','openai-compatible'].includes(provider)) throw new Error('AI_PROVIDER no admitido');
+  const baseUrl = providerBaseUrl(String(process.env.AI_BASE_URL || '').trim(), provider);
+  const style = String(process.env.AI_API_STYLE || (provider === 'openai' ? 'responses' : 'chat-completions')).trim().toLowerCase();
+  if (!['responses','chat-completions'].includes(style)) throw new Error('AI_API_STYLE no admitido');
   const timeoutSeconds = integer(process.env.AI_REQUEST_TIMEOUT_SECONDS, 60, 5, 120);
   const complete = async (messages, clientSignal) => {
     let response;
     try {
       const timeoutSignal = AbortSignal.timeout(timeoutSeconds * 1000);
-      response = await fetchImpl('https://api.openai.com/v1/responses', {
+      const endpoint = `${baseUrl}/${style === 'responses' ? 'responses' : 'chat/completions'}`;
+      const requestBody = style === 'responses'
+        ? { model, input: messages.map(({ role, content }) => ({ role, content: [{ type: 'input_text', text: content }] })) }
+        : { model, messages: messages.map(({ role, content }) => ({ role, content })) };
+      response = await fetchImpl(endpoint, {
         method: 'POST', redirect: 'error',
         signal: clientSignal ? AbortSignal.any([clientSignal, timeoutSignal]) : timeoutSignal,
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, input: messages.map(({ role, content }) => ({
-          role, content: [{ type: 'input_text', text: content }],
-        })) }),
+        body: JSON.stringify(requestBody),
       });
     } catch { throw new ApiError(503, 'El proveedor de IA no está disponible'); }
     if (!response.ok) throw new ApiError(response.status === 429 ? 429 : 502,
       response.status === 429 ? 'El asistente está ocupado; inténtalo más tarde' : 'El proveedor de IA rechazó la solicitud');
     let payload;
     try { payload = await response.json(); } catch { throw new ApiError(502, 'El proveedor de IA devolvió una respuesta inválida'); }
-    return { content: providerOutput(payload), usage: {
-      inputTokens: integer(payload?.usage?.input_tokens, 0, 0, Number.MAX_SAFE_INTEGER),
-      outputTokens: integer(payload?.usage?.output_tokens, 0, 0, Number.MAX_SAFE_INTEGER),
+    return { content: style === 'responses' ? responsesOutput(payload) : chatCompletionsOutput(payload), usage: {
+      inputTokens: integer(style === 'responses' ? payload?.usage?.input_tokens : payload?.usage?.prompt_tokens, 0, 0, Number.MAX_SAFE_INTEGER),
+      outputTokens: integer(style === 'responses' ? payload?.usage?.output_tokens : payload?.usage?.completion_tokens, 0, 0, Number.MAX_SAFE_INTEGER),
     } };
   };
   return new AiService({ store, complete, now,

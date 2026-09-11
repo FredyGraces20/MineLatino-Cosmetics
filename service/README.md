@@ -62,6 +62,11 @@ privado del servicio. `AI_REQUEST_TIMEOUT_SECONDS`, `AI_MAX_MESSAGE_CHARS`,
 Si falta cualquiera de las tres variables obligatorias, las rutas responden de forma
 segura que el asistente no está disponible.
 
+Para un proveedor OpenAI-compatible usa `AI_PROVIDER=openai-compatible`, una
+`AI_BASE_URL` HTTPS terminada normalmente en `/v1` y
+`AI_API_STYLE=chat-completions`. La URL se valida al iniciar; no puede incluir
+credenciales, query ni fragmento. La clave continúa exclusivamente en Railway.
+
 El token de cuenta o juego sirve sólo para solicitar una credencial efímera; no puede
 llamar directamente a chat. La credencial resultante usa exclusivamente
 `Authorization: Bearer`, tiene los alcances `ai:chat` y `afk:assistant`, está enlazada
