@@ -127,7 +127,7 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
 
             CosmeticModel model = res.model();
             if (model != null && !model.elements.isEmpty()) {
-                renderModel(poseStack, bufferSource, packedLight, renderState, res, model, item.slot(), item.cosmeticId());
+                renderModel(poseStack, bufferSource, packedLight, renderState, res, model, item.slot(), item.cosmeticId(), preview != null);
                 if(!model.quads.isEmpty()) submitted++;
             } else {
                 renderFallback(poseStack, bufferSource, packedLight, renderState, res.texture(), item.slot());
@@ -147,7 +147,8 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
 
     /** Renders a 3D model attached to the player. */
     private void renderModel(PoseStack poseStack, MultiBufferSource bufferSource, int packedLight,
-                             PlayerRenderState state, ResourceCache.CachedResource resource, CosmeticModel model, String slot, String cosmeticId) {
+                             PlayerRenderState state, ResourceCache.CachedResource resource, CosmeticModel model, String slot, String cosmeticId,
+                             boolean previewRender) {
 
         poseStack.pushPose();
         try {
@@ -179,9 +180,12 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
                         CosmeticPlacement.PET_Y + Math.sin(state.ageInTicks * 0.08) * 0.035,
                         CosmeticPlacement.PET_Z);
                 poseStack.scale(CosmeticPlacement.PET_SCALE, -CosmeticPlacement.PET_SCALE, -CosmeticPlacement.PET_SCALE);
+                // The editor/armory already uses its correct presentation yaw. Only the
+                // world attachment needs the companion turned toward the player camera.
+                poseStack.mulPose(new Quaternionf().rotationY(CosmeticPlacement.petYawRadians(previewRender)));
                 ApiClient.TransformData serverPet = CosmeticsClient.instance().getTransform(cosmeticId, "pet");
                 if (serverPet != null) applyDisplayTransform(poseStack, serverPet);
-                applyPetAnimation(poseStack,resource.petAnimation());
+                applyPetAnimation(poseStack,resource.petAnimation(),petState(state, previewRender));
             } else {
                 getParentModel().body.translateAndRotate(poseStack);
                 poseStack.translate(0, 0.3, "BACKPACK".equals(slot) ? 0.30 : 0.16);
@@ -227,8 +231,15 @@ public final class CosmeticRenderer extends RenderLayer<PlayerRenderState, Playe
         poseStack.scale(t.scale()[0], t.scale()[1], t.scale()[2]);
     }
 
-    private static void applyPetAnimation(PoseStack poseStack, PetAnimation animation) {
-        var pose=animation.sample(System.nanoTime()/1_000_000_000.0);
+    private static PetAnimation.State petState(PlayerRenderState state, boolean previewRender) {
+        if (previewRender) return PetAnimation.State.IDLE;
+        if (state.attackTime > 0.01f) return PetAnimation.State.ATTACK;
+        if (state.walkAnimationSpeed > 0.05f) return PetAnimation.State.WALK;
+        return PetAnimation.State.IDLE;
+    }
+
+    private static void applyPetAnimation(PoseStack poseStack, PetAnimation animation, PetAnimation.State state) {
+        var pose=animation.sample(state,System.nanoTime()/1_000_000_000.0);
         poseStack.translate(pose.position()[0]/16,pose.position()[1]/16,pose.position()[2]/16);
         poseStack.mulPose(new Quaternionf().rotationXYZ((float)Math.toRadians(pose.rotation()[0]),
                 (float)Math.toRadians(pose.rotation()[1]),(float)Math.toRadians(pose.rotation()[2])));

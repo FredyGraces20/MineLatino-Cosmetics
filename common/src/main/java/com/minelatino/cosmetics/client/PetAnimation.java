@@ -11,6 +11,8 @@ import java.util.Map;
 
 /** Lightweight reader for Blockbench/GeckoLib animation JSON files. */
 public final class PetAnimation {
+    public enum State { IDLE, WALK, ATTACK }
+
     public static final Pose IDENTITY = new Pose(new float[3], new float[3], new float[]{1, 1, 1});
     private final Map<String, Clip> clips;
     private final String selected;
@@ -50,6 +52,38 @@ public final class PetAnimation {
         Clip clip = clips.get(selected);
         if (clip == null && !clips.isEmpty()) clip = clips.values().iterator().next();
         return clip == null ? IDENTITY : clip.sample(seconds);
+    }
+
+    /** Selects a conventional Blockbench clip for the pet's current gameplay state. */
+    public Pose sample(State state, double seconds) {
+        Clip clip = findStateClip(state);
+        if (clip == null) clip = clips.get(selected);
+        if (clip == null && !clips.isEmpty()) clip = clips.values().iterator().next();
+        return clip == null ? IDENTITY : clip.sample(seconds);
+    }
+
+    String clipName(State state) {
+        for (String name : clips.keySet()) if (matchesState(name, state)) return name;
+        return clips.containsKey(selected) ? selected : clips.keySet().stream().findFirst().orElse("");
+    }
+
+    private Clip findStateClip(State state) {
+        String name = clipName(state);
+        return name.isEmpty() ? null : clips.get(name);
+    }
+
+    private static boolean matchesState(String rawName, State state) {
+        String name = rawName.toLowerCase(java.util.Locale.ROOT);
+        return switch (state) {
+            case IDLE -> containsAny(name, "idle", "stand", "quieto", "reposo");
+            case WALK -> containsAny(name, "walk", "walking", "run", "running", "caminar", "correr");
+            case ATTACK -> containsAny(name, "attack", "attacking", "swing", "hit", "golpe", "atacar");
+        };
+    }
+
+    private static boolean containsAny(String value, String... candidates) {
+        for (String candidate : candidates) if (value.contains(candidate)) return true;
+        return false;
     }
 
     private static JsonObject chooseRootBone(JsonObject bones) {

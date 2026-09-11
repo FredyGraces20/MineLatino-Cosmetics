@@ -8,9 +8,14 @@ El panel acepta archivos `.animation.json` exportados por Blockbench/GeckoLib pa
 2. En Blockbench crea un hueso raíz llamado `root`, `body` o `pet`.
 3. Anima en ese hueso `position`, `rotation` o `scale` con valores numéricos.
 4. Exporta las animaciones como `*.animation.json`.
-5. En **Archivos y editor 3D → Animación de mascota**, sube el archivo y elige el clip activo.
+5. Nombra los clips con `idle`, `walk` y `attack` (por ejemplo,
+   `animation.pet.idle`, `animation.pet.walk` y `animation.pet.attack`).
+6. En **Archivos y editor 3D → Animación de mascota**, sube el archivo y elige el clip de respaldo.
 
-El backend guarda el clip elegido. Los clientes actualizan el recurso periódicamente, por lo que cambiar de clip no requiere recompilar el mod.
+El mod usa `attack` mientras el jugador golpea, `walk` cuando se desplaza e
+`idle` cuando está quieto. Si el archivo no contiene el estado solicitado, usa
+el clip de respaldo elegido en el panel. Los clientes actualizan el recurso
+periódicamente, por lo que cambiar el archivo o el respaldo no requiere recompilar el mod.
 
 ## Formato admitido
 

@@ -22,4 +22,24 @@ class PetAnimationTest {
         assertThrows(IllegalArgumentException.class,()->PetAnimation.parse(
           "{\"animations\":{\"x\":{\"bones\":{\"root\":{\"rotation\":[\"query.x\",0,0]}}}}}","x"));
     }
+
+    @Test void selectsIdleWalkAndAttackClipsByConventionalNames() {
+        var animation=PetAnimation.parse("""
+          {"animations":{
+            "animation.pet.idle":{"bones":{"root":{"position":[0,1,0]}}},
+            "animation.pet.walk":{"bones":{"root":{"position":[0,2,0]}}},
+            "animation.pet.attack":{"bones":{"root":{"position":[0,3,0]}}}
+          }}
+          """, "animation.pet.idle");
+        assertEquals("animation.pet.idle", animation.clipName(PetAnimation.State.IDLE));
+        assertEquals("animation.pet.walk", animation.clipName(PetAnimation.State.WALK));
+        assertEquals("animation.pet.attack", animation.clipName(PetAnimation.State.ATTACK));
+        assertEquals(2f, animation.sample(PetAnimation.State.WALK, 0).position()[1], .0001f);
+        assertEquals(3f, animation.sample(PetAnimation.State.ATTACK, 0).position()[1], .0001f);
+    }
+
+    @Test void fallsBackToConfiguredClipWhenRequestedStateIsMissing() {
+        var animation=PetAnimation.parse(JSON,"animation.pet.idle");
+        assertEquals("animation.pet.idle", animation.clipName(PetAnimation.State.ATTACK));
+    }
 }

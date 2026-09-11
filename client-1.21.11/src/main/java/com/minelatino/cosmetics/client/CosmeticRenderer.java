@@ -18,6 +18,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
@@ -120,7 +122,7 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
 
             CosmeticModel model = res.model();
             if (model != null && !model.elements.isEmpty()) {
-                renderModel(poseStack, collector, packedLight, renderState, res, model, item.slot(), item.cosmeticId());
+                renderModel(poseStack, collector, packedLight, renderState, res, model, item.slot(), item.cosmeticId(), preview != null);
                 if(!model.quads.isEmpty()) submitted++;
             } else {
                 renderFallback(poseStack, collector, packedLight, renderState, res.texture(), item.slot());
@@ -139,7 +141,8 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
     }
 
     private void renderModel(PoseStack poseStack, SubmitNodeCollector collector, int packedLight,
-                             AvatarRenderState state, ResourceCache.CachedResource resource, CosmeticModel model, String slot, String cosmeticId) {
+                             AvatarRenderState state, ResourceCache.CachedResource resource, CosmeticModel model, String slot, String cosmeticId,
+                             boolean previewRender) {
         poseStack.pushPose();
         try {
             getParentModel().root().translateAndRotate(poseStack);
@@ -169,9 +172,10 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
                         CosmeticPlacement.PET_Y + Math.sin(state.ageInTicks * 0.08) * 0.035,
                         CosmeticPlacement.PET_Z);
                 poseStack.scale(CosmeticPlacement.PET_SCALE, -CosmeticPlacement.PET_SCALE, -CosmeticPlacement.PET_SCALE);
+                poseStack.mulPose(new Quaternionf().rotationY(CosmeticPlacement.petYawRadians(previewRender)));
                 ApiClient.TransformData serverPet = CosmeticsClient.instance().getTransform(cosmeticId, "pet");
                 if (serverPet != null) applyDisplayTransform(poseStack, serverPet);
-                applyPetAnimation(poseStack,resource.petAnimation());
+                applyPetAnimation(poseStack,resource.petAnimation(),petState(state, previewRender));
             } else {
                 getParentModel().body.translateAndRotate(poseStack);
                 poseStack.translate(0, 0.3, "BACKPACK".equals(slot) ? 0.30 : 0.16);
@@ -188,22 +192,28 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
                         poseStack.scale(b.scale()[0],b.scale()[1],b.scale()[2]);
                 }
             }
+            // 1.21.11 renders GUI entities through a deferred PIP collector. Submitting
+            // thousands of tiny custom nodes (one per face) can overflow/split its GUI
+            // buffers and produce the horizontal texture streaks seen in the armory.
+            // Batch all faces sharing a texture into a single immutable render node.
+            Map<Identifier, List<CosmeticModel.Quad>> batches = new LinkedHashMap<>();
             for (CosmeticModel.Quad quad : model.quads) {
                 var material = resource.materials().get(quad.texture());
                 var texture = material == null ? resource.texture() : material.texture();
-                if (material == null || (material.animation().rows() == 1 && material.animation().columns() == 1)) {
-                    collector.submitCustomGeometry(poseStack, RenderTypes.entityCutout(texture), (pose, consumer) -> {
-                        renderQuad(consumer, pose, packedLight, quad);
-                    });
-                } else {
+                CosmeticModel.Quad submittedQuad = quad;
+                if (material != null && (material.animation().rows() != 1 || material.animation().columns() != 1)) {
                     var a = material.animation();
                     double ticks = System.nanoTime() / 50_000_000.0;
-                    CosmeticModel.Quad animQuad = new CosmeticModel.Quad(a.vertex(quad.v0(),ticks),a.vertex(quad.v1(),ticks),
+                    submittedQuad = new CosmeticModel.Quad(a.vertex(quad.v0(),ticks),a.vertex(quad.v1(),ticks),
                             a.vertex(quad.v2(),ticks),a.vertex(quad.v3(),ticks),quad.normal(),quad.texture());
-                    collector.submitCustomGeometry(poseStack, RenderTypes.entityCutout(texture), (pose, consumer) -> {
-                        renderQuad(consumer, pose, packedLight, animQuad);
-                    });
                 }
+                batches.computeIfAbsent(texture, ignored -> new ArrayList<>()).add(submittedQuad);
+            }
+            for (var batch : batches.entrySet()) {
+                List<CosmeticModel.Quad> quads = List.copyOf(batch.getValue());
+                collector.submitCustomGeometry(poseStack, RenderTypes.entityCutout(batch.getKey()), (pose, consumer) -> {
+                    for (CosmeticModel.Quad quad : quads) renderQuad(consumer, pose, packedLight, quad);
+                });
             }
         } finally {
             poseStack.popPose();
@@ -220,8 +230,15 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
         poseStack.scale(t.scale()[0], t.scale()[1], t.scale()[2]);
     }
 
-    private static void applyPetAnimation(PoseStack poseStack, PetAnimation animation) {
-        var pose=animation.sample(System.nanoTime()/1_000_000_000.0);
+    private static PetAnimation.State petState(AvatarRenderState state, boolean previewRender) {
+        if (previewRender) return PetAnimation.State.IDLE;
+        if (state.attackTime > 0.01f) return PetAnimation.State.ATTACK;
+        if (state.walkAnimationSpeed > 0.05f) return PetAnimation.State.WALK;
+        return PetAnimation.State.IDLE;
+    }
+
+    private static void applyPetAnimation(PoseStack poseStack, PetAnimation animation, PetAnimation.State state) {
+        var pose=animation.sample(state,System.nanoTime()/1_000_000_000.0);
         poseStack.translate(pose.position()[0]/16,pose.position()[1]/16,pose.position()[2]/16);
         poseStack.mulPose(new Quaternionf().rotationXYZ((float)Math.toRadians(pose.rotation()[0]),
                 (float)Math.toRadians(pose.rotation()[1]),(float)Math.toRadians(pose.rotation()[2])));

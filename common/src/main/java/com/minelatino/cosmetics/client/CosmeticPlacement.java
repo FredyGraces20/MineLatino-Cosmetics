@@ -14,6 +14,11 @@ public final class CosmeticPlacement {
     public static final float PET_Z = 0.0f;
     public static final float PET_SCALE = 0.55f;
 
+    /** The armory/editor presents the asset as-authored; the world coordinate system faces the opposite way. */
+    public static float petYawRadians(boolean previewRender) {
+        return previewRender ? 0f : (float) Math.PI;
+    }
+
     /** Blockbench's front faces the player after attachment unless back-mounted models are turned around. */
     public static boolean needsBackFacingRotation(String slot) {
         return "BACKPACK".equals(slot) || "CAPE".equals(slot) || "WINGS".equals(slot);

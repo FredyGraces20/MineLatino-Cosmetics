@@ -23,4 +23,9 @@ class CosmeticPlacementTest {
             assertEquals(0f, CosmeticPlacement.backFacingYawRadians(slot));
         }
     }
+
+    @Test void petTurnsOnlyWhenAttachedInTheWorld() {
+        assertEquals(0f, CosmeticPlacement.petYawRadians(true));
+        assertEquals((float) Math.PI, CosmeticPlacement.petYawRadians(false));
+    }
 }
