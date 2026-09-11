@@ -42,6 +42,10 @@ public final class CosmeticPreview {
         float scale=Math.min(h/3.2f,w/2.4f)*zoom;
         if (previousFrame != null) layerAvailable=previousFrame.layerVisited;
         Frame frame=new Frame(List.copyOf(equipment));
+        // 1.21.11 keeps the whole GUI as a retained render state. Put the PIP entity
+        // in its own stratum so its framebuffer blit cannot be merged with or drawn
+        // over the wardrobe controls submitted before/after it.
+        g.nextStratum();
         g.enableScissor(x,y,x+w,y+h);
         try {
             @SuppressWarnings("unchecked")
@@ -67,6 +71,7 @@ public final class CosmeticPreview {
         } finally {
             CosmeticRenderer.ENTITY_UUID_MAP.remove(actor.getId());
             g.disableScissor();
+            g.nextStratum();
         }
     }
 }

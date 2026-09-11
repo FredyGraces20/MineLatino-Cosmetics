@@ -46,16 +46,28 @@ public final class CosmeticPreview {
         float scale=Math.min(h/3.2f,w/2.4f)*zoom;
         Frame frame=new Frame(actor.getId(),List.copyOf(equipment));
         Frame previous=FRAME.get();
+        // GuiGraphics batches vertices. If the existing GUI batch or the entity layer is
+        // flushed after disableScissor(), oversized cosmetic quads escape the preview and
+        // are drawn over the wardrobe buttons. Isolate and finish the complete entity batch
+        // while the preview rectangle is still the active scissor.
+        g.flush();
         g.enableScissor(x,y,x+w,y+h);
         FRAME.set(frame);
         try {
             InventoryScreen.renderEntityInInventory(g,x+w/2f,y+h*.87f,scale,new Vector3f(),
                     new Quaternionf().rotationZ((float)Math.PI).rotateY((float)Math.toRadians(orbit)),null,actor);
+            g.flush();
             layerAvailable=frame.layerVisited;
         } finally {
-            if (previous == null) FRAME.remove(); else FRAME.set(previous);
-            CosmeticRenderer.ENTITY_UUID_MAP.remove(actor.getId());
-            g.disableScissor();
+            // Also flush a partially submitted entity if a third-party render layer throws.
+            // The finally block then restores both our ThreadLocal and the scissor stack.
+            try {
+                g.flush();
+            } finally {
+                if (previous == null) FRAME.remove(); else FRAME.set(previous);
+                CosmeticRenderer.ENTITY_UUID_MAP.remove(actor.getId());
+                g.disableScissor();
+            }
         }
     }
 }
