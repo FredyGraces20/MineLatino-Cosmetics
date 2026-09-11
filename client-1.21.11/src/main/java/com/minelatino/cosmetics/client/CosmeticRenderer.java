@@ -2,10 +2,8 @@ package com.minelatino.cosmetics.client;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
-import net.minecraft.client.model.Model;
 import net.minecraft.client.model.player.PlayerModel;
 import net.minecraft.client.model.player.PlayerCapeModel;
-import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
@@ -15,23 +13,16 @@ import net.minecraft.client.renderer.entity.layers.CustomHeadLayer;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import org.joml.Quaternionf;
 import net.minecraft.client.renderer.entity.state.AvatarRenderState;
-import net.minecraft.core.Direction;
 import net.minecraft.resources.Identifier;
-import net.minecraft.util.Unit;
-import org.joml.Vector3f;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.Collections;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.WeakHashMap;
 
 /**
  * Renders cosmetic overlays on players using 3D models (Blockbench JSON format).
@@ -50,15 +41,6 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
     // submitEntityRenderState may retain or copy its state before the PIP pass.
     // Entity ID is the stable bridge between screen submission and layer render.
     private static final Map<Integer, CosmeticPreview.Frame> PREVIEW_FRAMES = new ConcurrentHashMap<>();
-    /**
-     * 1.21.11 renders GUI entities through a picture-in-picture framebuffer. Custom
-     * geometry nodes are not isolated reliably by every renderer optimization, so
-     * wardrobe geometry is baked into vanilla ModelParts and sent through Mojang's
-     * regular model pipeline. Entries are weakly keyed by the downloaded model and
-     * contain at most one part per texture/animation frame.
-     */
-    private static final Map<CosmeticModel, Map<String, Model.Simple>> PREVIEW_MODELS =
-            Collections.synchronizedMap(new WeakHashMap<>());
     private static int renderCallCount = 0;
     private final ResourceCache resourceCache;
     private final PlayerCapeModel capeModel = new PlayerCapeModel(PlayerCapeModel.createCapeLayer().bakeRoot());
@@ -213,7 +195,6 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
             // vanilla ModelPart submissions so the 1.21.11 PIP framebuffer and scissor
             // own the complete draw. World rendering keeps the lightweight custom path.
             Map<Identifier, List<CosmeticModel.Quad>> batches = new LinkedHashMap<>();
-            Map<Identifier, Integer> animationFrames = new HashMap<>();
             for (CosmeticModel.Quad quad : model.quads) {
                 var material = resource.materials().get(quad.texture());
                 var texture = material == null ? resource.texture() : material.texture();
@@ -221,7 +202,6 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
                 if (material != null && (material.animation().rows() != 1 || material.animation().columns() != 1)) {
                     var a = material.animation();
                     double ticks = System.nanoTime() / 50_000_000.0;
-                    animationFrames.put(texture, a.frame(ticks));
                     submittedQuad = new CosmeticModel.Quad(a.vertex(quad.v0(),ticks),a.vertex(quad.v1(),ticks),
                             a.vertex(quad.v2(),ticks),a.vertex(quad.v3(),ticks),quad.normal(),quad.texture());
                 }
@@ -229,85 +209,18 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
             }
             for (var batch : batches.entrySet()) {
                 List<CosmeticModel.Quad> quads = List.copyOf(batch.getValue());
-                if (previewRender) {
-                    int frame = animationFrames.getOrDefault(batch.getKey(), -1);
-                    Model.Simple previewModel = previewModel(model, batch.getKey(), frame, quads);
-                    // Use the same feature pipeline as the player skin. The standalone
-                    // ModelPart queue is not reliably included by optimized GUI PIP
-                    // renderers, while Model submissions are the native entity path.
-                    collector.submitModel(previewModel, Unit.INSTANCE, poseStack,
-                            RenderTypes.entityCutoutNoCull(batch.getKey()), packedLight,
-                            OverlayTexture.NO_OVERLAY, -1, null, 0, null);
-                } else {
-                    collector.submitCustomGeometry(poseStack, RenderTypes.entityCutout(batch.getKey()), (pose, consumer) -> {
-                        for (CosmeticModel.Quad quad : quads) renderQuad(consumer, pose, packedLight, quad);
-                    });
-                }
+                // The equipped world model already proves this exact geometry path.
+                // Submit it unchanged inside the isolated GUI PIP pass instead of
+                // converting its faces to ModelPart cubes (which remapped the atlas).
+                collector.submitCustomGeometry(poseStack,
+                        previewRender ? RenderTypes.entityCutoutNoCull(batch.getKey()) : RenderTypes.entityCutout(batch.getKey()),
+                        (pose, consumer) -> {
+                            for (CosmeticModel.Quad quad : quads) renderQuad(consumer, pose, packedLight, quad);
+                        });
             }
         } finally {
             poseStack.popPose();
         }
-    }
-
-    private static Model.Simple previewModel(CosmeticModel model, Identifier texture, int frame,
-                                             List<CosmeticModel.Quad> quads) {
-        String key = texture + "#" + frame;
-        synchronized (PREVIEW_MODELS) {
-            return PREVIEW_MODELS.computeIfAbsent(model, ignored -> new HashMap<>())
-                    .computeIfAbsent(key, ignored -> new Model.Simple(bakePart(quads), RenderTypes::entityCutoutNoCull));
-        }
-    }
-
-    /** Converts already-baked cosmetic quads to the same primitive used by vanilla entity models. */
-    private static ModelPart bakePart(List<CosmeticModel.Quad> quads) {
-        List<ModelPart.Cube> cubes = new ArrayList<>(quads.size());
-        for (CosmeticModel.Quad quad : quads) {
-            ModelPart.Vertex[] vertices = new ModelPart.Vertex[]{
-                    modelVertex(quad.v0()), modelVertex(quad.v1()),
-                    modelVertex(quad.v2()), modelVertex(quad.v3())
-            };
-            // A zero-sized placeholder is legal to vanilla's immediate compiler, but
-            // optimized feature pipelines may discard it before reading the replaced
-            // polygon. Give every submitted face a real, non-zero bounding volume.
-            float minX = minCoordinate(vertices, 0), minY = minCoordinate(vertices, 1), minZ = minCoordinate(vertices, 2);
-            float maxX = maxCoordinate(vertices, 0), maxY = maxCoordinate(vertices, 1), maxZ = maxCoordinate(vertices, 2);
-            float epsilon = 1.0F / 1024.0F;
-            if (maxX - minX < epsilon) maxX = minX + epsilon;
-            if (maxY - minY < epsilon) maxY = minY + epsilon;
-            if (maxZ - minZ < epsilon) maxZ = minZ + epsilon;
-            ModelPart.Cube cube = new ModelPart.Cube(0, 0, minX, minY, minZ,
-                    maxX - minX, maxY - minY, maxZ - minZ,
-                    0, 0, 0, false, 16, 16, Set.of(Direction.NORTH));
-            cube.polygons[0] = new ModelPart.Polygon(vertices, new Vector3f(quad.normal()));
-            cubes.add(cube);
-        }
-        return new ModelPart(cubes, Map.of());
-    }
-
-    private static float minCoordinate(ModelPart.Vertex[] vertices, int axis) {
-        float value = Float.POSITIVE_INFINITY;
-        for (ModelPart.Vertex vertex : vertices) value = Math.min(value, coordinate(vertex, axis));
-        return value;
-    }
-
-    private static float maxCoordinate(ModelPart.Vertex[] vertices, int axis) {
-        float value = Float.NEGATIVE_INFINITY;
-        for (ModelPart.Vertex vertex : vertices) value = Math.max(value, coordinate(vertex, axis));
-        return value;
-    }
-
-    private static float coordinate(ModelPart.Vertex vertex, int axis) {
-        return switch (axis) {
-            case 0 -> vertex.x();
-            case 1 -> vertex.y();
-            default -> vertex.z();
-        };
-    }
-
-    private static ModelPart.Vertex modelVertex(float[] vertex) {
-        // ModelPart stores positions in pixels and normalizes them by 16 while compiling.
-        return new ModelPart.Vertex(vertex[0] * 16, vertex[1] * 16, vertex[2] * 16,
-                vertex[3], vertex[4]);
     }
 
     /** Applies a server-side transform after the back-facing base rotation. */
