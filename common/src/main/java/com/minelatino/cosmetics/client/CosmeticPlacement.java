@@ -14,9 +14,13 @@ public final class CosmeticPlacement {
     public static final float PET_Z = 0.0f;
     public static final float PET_SCALE = 0.55f;
 
-    /** The armory/editor presents the asset as-authored; the world coordinate system faces the opposite way. */
+    /**
+     * The direct geometry renderer used by both the armory preview and the
+     * equipped companion has the same forward axis, so both need the same
+     * half-turn from Blockbench space.
+     */
     public static float petYawRadians(boolean previewRender) {
-        return previewRender ? 0f : (float) Math.PI;
+        return (float) Math.PI;
     }
 
     /** Blockbench's front faces the player after attachment unless back-mounted models are turned around. */
