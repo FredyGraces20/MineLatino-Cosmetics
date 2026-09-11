@@ -232,7 +232,7 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
                     ModelPart part = previewPart(model, batch.getKey(), frame, quads);
                     collector.submitModelPart(part, poseStack, RenderTypes.entityCutout(batch.getKey()),
                             packedLight, OverlayTexture.NO_OVERLAY, null,
-                            false, false, -1, null, 0);
+                            false, false, -1, null, 0xFFFFFFFF);
                 } else {
                     collector.submitCustomGeometry(poseStack, RenderTypes.entityCutout(batch.getKey()), (pose, consumer) -> {
                         for (CosmeticModel.Quad quad : quads) renderQuad(consumer, pose, packedLight, quad);
