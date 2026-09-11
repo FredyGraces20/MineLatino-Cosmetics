@@ -49,6 +49,18 @@ public final class PauseMenu {
         syncMenuConfig();
         Minecraft minecraft = Minecraft.getInstance();
         MenuConfig config = MenuConfig.read(minecraft.gameDirectory.toPath());
+        // Personalization belongs to the local mod and stays available even if
+        // the remotely configurable MineLatino links are temporarily disabled.
+        for (var child : List.copyOf(screen.children())) {
+            if (child instanceof Button old
+                    && old.getMessage().getContents() instanceof TranslatableContents contents
+                    && contents.getKey().equals("menu.playerReporting")) {
+                int x = old.getX(), y = old.getY(), w = old.getWidth(), h = old.getHeight();
+                old.setX(-0x4000);
+                add.accept(Button.builder(Component.literal("Personalizar"), button ->
+                        minecraft.setScreen(new HudEditorScreen(screen))).bounds(x, y, w, h).build());
+            }
+        }
         if (!config.enabled()) return;
         // Phase 1: rename labels and collect buttons that need URL overrides
         record PendingReplace(Button button, String key) {}
@@ -56,6 +68,7 @@ public final class PauseMenu {
         for (var child : screen.children()) {
             if (child instanceof Button button && button.getMessage().getContents() instanceof TranslatableContents contents) {
                 String key = contents.getKey();
+                if (key.equals("menu.playerReporting")) continue;
                 String replacement = config.labels().get(key);
                 if (replacement != null) button.setMessage(Component.literal(replacement));
                 if (config.vanillaUrls().containsKey(key)) toReplace.add(new PendingReplace(button, key));

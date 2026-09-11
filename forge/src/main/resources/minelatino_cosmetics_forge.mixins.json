@@ -1,0 +1,7 @@
+{
+  "required": true,
+  "package": "com.minelatino.cosmetics.forge.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": ["ForgeGuiMixin", "ForgeMouseHandlerMixin"],
+  "injectors": { "defaultRequire": 1 }
+}

@@ -6,7 +6,7 @@ plugins {
 }
 
 group = 'com.minelatino.cosmetics'
-version = '0.1.0-alpha.32'
+version = '0.1.0-alpha.33'
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 tasks.withType(JavaCompile).configureEach {
@@ -54,11 +54,18 @@ sourceSets.main {
     resources.exclude 'minelatino_cosmetics.mixins.json'
     resources.exclude 'fabric.mod.json'
 }
+
 processResources {
     inputs.property 'version', project.version
     inputs.property 'mcVersion', mcVersion
     inputs.property 'forgeVersion', forgeVersion
     filesMatching('META-INF/mods.toml') {
         expand(version: project.version, mcVersion: mcVersion, forgeVersion: forgeVersion)
+    }
+}
+
+jar {
+    manifest {
+        attributes 'MixinConfigs': 'minelatino_cosmetics_forge.mixins.json'
     }
 }
