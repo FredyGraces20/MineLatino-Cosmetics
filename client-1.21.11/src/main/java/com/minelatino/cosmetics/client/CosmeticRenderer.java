@@ -149,8 +149,10 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
                     poseStack.scale(head.scale()[0], head.scale()[1], head.scale()[2]);
                 }
             } else if ("PET".equals(slot)) {
-                poseStack.translate(0.8, 1.0 + Math.sin(state.ageInTicks * 0.08) * 0.035, 0);
-                poseStack.scale(0.55f, -0.55f, -0.55f);
+                poseStack.translate(CosmeticPlacement.PET_X,
+                        CosmeticPlacement.PET_Y + Math.sin(state.ageInTicks * 0.08) * 0.035,
+                        CosmeticPlacement.PET_Z);
+                poseStack.scale(CosmeticPlacement.PET_SCALE, -CosmeticPlacement.PET_SCALE, -CosmeticPlacement.PET_SCALE);
                 ApiClient.TransformData serverPet = CosmeticsClient.instance().getTransform(cosmeticId, "pet");
                 if (serverPet != null) applyDisplayTransform(poseStack, serverPet);
                 applyPetAnimation(poseStack,resource.petAnimation());
@@ -252,7 +254,7 @@ public final class CosmeticRenderer extends RenderLayer<AvatarRenderState, Playe
                 if ("BACKPACK".equals(slot)) {
                     getParentModel().body.translateAndRotate(poseStack);
                     poseStack.translate(0, 0.3, 0.16);
-                } else poseStack.translate(0.8, 1.0, 0);
+                } else poseStack.translate(CosmeticPlacement.PET_X, CosmeticPlacement.PET_Y, CosmeticPlacement.PET_Z);
                 collector.submitCustomGeometry(poseStack, RenderTypes.entityCutoutNoCull(texture), (pose, c) -> {
                     drawQuad(c, pose, packedLight, -.22f, .22f, -.22f, .22f, 0, 1, 0, 1, 0, 0, -1);
                 });

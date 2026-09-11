@@ -119,7 +119,7 @@ test('editor exposes a distinct renderer-compatible anchor for every cosmetic ty
   assert.deepEqual(Array.from(api.SLOTS), ['hat', 'cape', 'wings', 'backpack', 'pet']);
   assert.deepEqual(Array.from(api.slotBase('cape').position), [0, .3, .16]);
   assert.deepEqual(Array.from(api.slotBase('wings').position), [0, .3, .16]);
-  assert.deepEqual(Array.from(api.slotBase('pet').position), [.8, 1, 0]);
+  assert.deepEqual(Array.from(api.slotBase('pet').position), [1.15, 1, 0]);
   assert.deepEqual(Array.from(api.slotBase('pet').scale), [.55, -.55, -.55]);
   assert.equal(api.slotBase('cape').yaw, Math.PI);
   assert.equal(api.slotBase('pet').yaw, 0);

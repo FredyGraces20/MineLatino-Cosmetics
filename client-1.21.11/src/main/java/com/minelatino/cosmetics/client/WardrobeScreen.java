@@ -139,7 +139,9 @@ public final class WardrobeScreen extends Screen {
                     WardrobeButton.panel(g,getX(),getY(),getWidth(),getHeight(),item.id().equals(selectedId) ? ACCENT : 0xFF404343,
                             isHoveredOrFocused() ? 0xFF38372F : 0xFF2B2D2D);
                     var texture=client.resources().getOrDownloadTexture(item.id());
-                    if(texture!=null) g.blit(texture,getX()+4,getY()+4,26,26,0f,0f,26f,26f);
+                    // 1.21.11 expects normalized UV bounds here.  Passing 26 as
+                    // max UV sampled outside the texture and left cards blank.
+                    if(texture!=null) g.blit(texture,getX()+4,getY()+4,26,26,0f,1f,0f,1f);
                     else g.drawCenteredString(font,"?",getX()+17,getY()+12,DIM);
                     g.drawString(font,font.plainSubstrByWidth(item.name(),Math.max(8,getWidth()-39)),getX()+35,getY()+5,TEXT,false);
                     boolean saved=item.id().equals(controller.snapshot().equipped().get(item.slot()));

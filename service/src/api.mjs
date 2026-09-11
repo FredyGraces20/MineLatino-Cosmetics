@@ -95,9 +95,11 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
   function resourceVersion(id, resource = store.getResource(id)) {
     const files = store.getResourceFiles(id);
     const petAnimation = store.getPetAnimation(id);
+    const transforms = store.getTransforms(id);
     return createHash('sha256').update(JSON.stringify([resource?.sha256, resource?.model_sha256,
       files.map(f => [f.name, f.sha256, f.uploaded_at, f.mcmeta_path, f.mcmeta_size]),
-      petAnimation?.sha256, petAnimation?.animation_name, petAnimation?.updated_at])).digest('hex').slice(0, 12);
+      petAnimation?.sha256, petAnimation?.animation_name, petAnimation?.updated_at,
+      Object.entries(transforms).map(([slot, value]) => [slot, value.updatedAt])])).digest('hex').slice(0, 12);
   }
   return async (request, remoteAddress = 'local') => {
     try {
@@ -215,8 +217,9 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
           const resource = store.getResource(item.id);
           const files = store.getResourceFiles(item.id);
           const hasTexture = !!resource?.file_path || files.length > 0;
+          const transform = store.getTransforms(item.id)[item.slot.toLowerCase()] ?? null;
           return { ...item, ...store.product(item.id), hasTexture, hasModel: !!resource?.model_path,
-            textureCount: files.length,
+            textureCount: files.length, transform,
             resourceVersion: resourceVersion(item.id, resource) };
         });
         return Response.json({ items, nextOffset: items.length === 50 ? start + 50 : null },

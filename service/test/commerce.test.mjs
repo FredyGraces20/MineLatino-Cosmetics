@@ -20,12 +20,14 @@ test('product metadata preserves old clients and rejects invalid prices', t => {
 });
 test('public storefront exposes only published products and disables unconfigured providers', async t => {
   const { store } = fixture(t);
+  store.saveTransform('pack', 'backpack', { translation: [8, 4, -2], rotation: [0, 15, 0], scale: [1.2, 1.2, 1.2] }, 'test');
   store.saveCosmetic('draft', { name: 'Draft', slot: 'HAT', status: 'draft', expectedRevision: 0 }, 'test');
   const commerce = new Commerce(store);
   const api = createApi({ store, commerce, adminToken: 'test-only-key-with-at-least-32-characters' });
   const response = await api(new Request('http://localhost/v1/storefront/catalog', { headers: { Origin: 'http://localhost:3000' } }));
   assert.equal(response.status, 200); assert.equal(response.headers.get('access-control-allow-origin'), '*');
   const page = await response.json(); assert.equal(page.items.length, 1); assert.equal(page.items[0].amountMinor, 999); assert.equal(page.nextOffset, null);
+  assert.deepEqual(page.items[0].transform.translation, [8, 4, -2]);
   const config = await (await api(new Request('http://localhost/v1/storefront/payments'))).json();
   assert.equal(config.checkoutEnabled, true); assert.equal(config.providers.find(p => p.id === 'manual').enabled, true);
   assert.ok(config.providers.filter(p => p.id !== 'manual').every(p => !p.enabled));
