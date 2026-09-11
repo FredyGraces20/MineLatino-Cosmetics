@@ -8,6 +8,8 @@ import { AdminAuth } from './adminAuth.mjs';
 import { AccountAuth } from './accountAuth.mjs';
 import { Commerce } from './commerce.mjs';
 import { createPasswordRecoveryFromEnv } from './recovery.mjs';
+import { createAiServiceFromEnv } from './ai.mjs';
+import { AfkUsageService } from './afkUsage.mjs';
 
 const port = Number(process.env.PORT ?? 8787);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('PORT inválido');
@@ -23,11 +25,13 @@ const origin = process.env.COSMETICS_ORIGIN || `http://127.0.0.1:${port}`;
 const adminAuth = new AdminAuth({ store, bootstrapToken: adminToken });
 const accountAuth = new AccountAuth({ store, recovery: createPasswordRecoveryFromEnv() });
 const commerce = new Commerce(store);
+const ai = createAiServiceFromEnv({ store });
+const afkUsage = new AfkUsageService({ store });
 const publicDir = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'public');
 // Premium is secure-by-default. Setting the flag to false can temporarily stop
 // premium login during an incident, but never enables an offline UUID bypass.
 const premiumEnabled = process.env.COSMETICS_ENABLE_PREMIUM !== 'false';
-const api = createApi({ store, adminToken, adminAuth, accountAuth, commerce, resourceDir, origin, premiumEnabled });
+const api = createApi({ store, adminToken, adminAuth, accountAuth, commerce, ai, afkUsage, resourceDir, origin, premiumEnabled });
 const trustedProxyAddresses = (process.env.COSMETICS_TRUSTED_PROXY_ADDRESSES || '').split(',').map(value => value.trim()).filter(Boolean);
 const server = createHttpServer(api, origin, publicDir, {
   trustRailwayProxy: !!process.env.RAILWAY_ENVIRONMENT_ID,

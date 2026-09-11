@@ -4,6 +4,7 @@ import { ApiError, requireThat } from './store.mjs';
 
 const SESSION_TTL = 30 * 24 * 60 * 60 * 1000;
 const GAME_TTL = 24 * 60 * 60 * 1000;
+const ASSISTANT_TTL = 10 * 60 * 1000;
 const RESET_TTL = 15 * 60 * 1000;
 const tokenHash = token => createHash('sha256').update(token).digest('hex');
 const RESET_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -48,6 +49,10 @@ export class AccountAuth {
     this.store = store; this.now = now; this.recovery = recovery;
     this.recoveryCooldowns = new Map();
     this.loginFailures = new Map();
+    // Assistant credentials never reach persistent storage. Each one remains
+    // chained to its parent account/game session, so logout and revocation take
+    // effect immediately even before this short TTL expires.
+    this.assistantSessions = new Map();
   }
 
   async register(input) {
@@ -123,6 +128,40 @@ export class AccountAuth {
   gameToken(header) {
     const { account } = this.authenticate(header, ['account']);
     return this.issue(account.account_id, 'game', GAME_TTL);
+  }
+
+  assistantToken(header) {
+    const { session, account } = this.authenticate(header, ['account', 'game']);
+    const token = randomBytes(32).toString('base64url'), expiresAt = this.now() + ASSISTANT_TTL;
+    this.pruneAssistantSessions();
+    this.assistantSessions.set(tokenHash(token), {
+      accountId: account.account_id, parentTokenHash: session.token_hash, expiresAt,
+      scopes: ['ai:chat', 'afk:assistant'],
+    });
+    return { token, tokenType: 'Bearer', scopes: ['ai:chat', 'afk:assistant'], expiresAt };
+  }
+
+  authenticateAssistant(header, requiredScope = 'ai:chat') {
+    requireThat(typeof header === 'string' && header.startsWith('Bearer '), 'Sesión del asistente requerida', 401);
+    this.pruneAssistantSessions();
+    const key = tokenHash(header.slice(7)), assistant = this.assistantSessions.get(key);
+    requireThat(assistant && assistant.expiresAt > this.now(), 'Sesión del asistente inválida o caducada', 401);
+    requireThat(assistant.scopes.includes(requiredScope), 'Permiso del asistente insuficiente', 403);
+    const parent = this.store.accountSession(assistant.parentTokenHash);
+    requireThat(parent && parent.account_id === assistant.accountId && parent.expires_at > this.now(), 'Sesión vinculada revocada', 401);
+    const account = this.store.accountById(assistant.accountId, true);
+    requireThat(account?.status === 'active', 'La cuenta no está activa', 403);
+    return { accountId: assistant.accountId, expiresAt: assistant.expiresAt };
+  }
+
+  revokeAssistant(header) {
+    this.authenticateAssistant(header);
+    this.assistantSessions.delete(tokenHash(header.slice(7)));
+  }
+
+  pruneAssistantSessions() {
+    const now = this.now();
+    for (const [key, value] of this.assistantSessions) if (value.expiresAt <= now) this.assistantSessions.delete(key);
   }
 
   async updatePassword(accountId, input) {

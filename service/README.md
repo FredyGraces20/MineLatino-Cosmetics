@@ -49,6 +49,38 @@ administrativos, permisos de archivos, copias verificadas y operación multiinst
 | POST `/v1/account/password/reset` | Consumir el código y definir una contraseña nueva |
 | PUT `/v1/account/password` | Cambiarla con sesión y contraseña actual |
 | POST `/v1/admin/player-accounts/<id>/password-reset` | Generar un código de soporte de un solo uso |
+| POST `/v1/ai/token` | Canjear una sesión vinculada por un token IA de 10 minutos |
+| GET `/v1/ai/status` | Consultar disponibilidad y límites con token IA |
+| POST `/v1/ai/chat` | Enviar un mensaje idempotente en una conversación de la cuenta |
+| POST `/v1/ai/logout` | Revocar el token IA actual |
+
+## Asistente IA privado
+
+Configura `AI_PROVIDER=openai`, `AI_API_KEY` y `AI_MODEL` únicamente en el entorno
+privado del servicio. `AI_REQUEST_TIMEOUT_SECONDS`, `AI_MAX_MESSAGE_CHARS`,
+`AI_MAX_CONTEXT_MESSAGES` y `AI_DAILY_REQUEST_LIMIT` son límites operativos opcionales.
+Si falta cualquiera de las tres variables obligatorias, las rutas responden de forma
+segura que el asistente no está disponible.
+
+El token de cuenta o juego sirve sólo para solicitar una credencial efímera; no puede
+llamar directamente a chat. La credencial resultante usa exclusivamente
+`Authorization: Bearer`, tiene los alcances `ai:chat` y `afk:assistant`, está enlazada
+a la sesión padre y deja de funcionar al cerrar sesiones, suspender/eliminar la cuenta
+o reiniciar el servicio. Conversaciones, mensajes y consumo se almacenan por
+`accountId`; un `requestId` evita cobros y respuestas duplicadas.
+
+## Tiempo de AFK Farm
+
+El panel **AFK Farm** permite buscar una cuenta MineLatino, añadir tiempo, establecer
+un saldo exacto o dejarlo en cero. Los cambios quedan en la auditoría. Una cuenta nueva
+empieza con cero segundos y no puede iniciar el flujo hasta recibir tiempo.
+
+El mod canjea su sesión vinculada en `POST /v1/afk/token`, consulta el saldo mediante
+`GET /v1/afk/status` y abre una sesión exclusiva en `POST /v1/afk/sessions`. Mientras
+la automatización está activa llama al heartbeat cada 20 segundos. El backend calcula
+el tiempo transcurrido con su propio reloj, limita a 60 segundos el cargo de una
+renovación aislada y bloquea nuevas sesiones cuando el saldo se agota. Ninguna ruta
+de cliente acepta segundos consumidos ni una identidad enviada en el cuerpo.
 
 ## Recuperación de cuentas
 

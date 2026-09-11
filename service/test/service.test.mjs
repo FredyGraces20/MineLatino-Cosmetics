@@ -9,6 +9,8 @@ import { AdminAuth } from '../src/adminAuth.mjs';
 import { AccountAuth } from '../src/accountAuth.mjs';
 import { createApi } from '../src/api.mjs';
 import { createHttpServer } from '../src/http.mjs';
+import { AiService } from '../src/ai.mjs';
+import { AfkUsageService } from '../src/afkUsage.mjs';
 import { DatabaseSync } from 'node:sqlite';
 
 const OWNER = '1234567890abcdef1234567890abcdef';
@@ -112,7 +114,9 @@ function fixture(t, options = {}) {
   const auth = new PlayerAuth({ verify: async () => ({ uuid: OWNER, name: 'TestPlayer' }) });
   const adminAuth = new AdminAuth({ store, bootstrapToken: ADMIN });
   const accountAuth = new AccountAuth({ store, recovery: options.recovery, now: options.now });
-  const api = createApi({ store, adminToken: ADMIN, adminAuth, accountAuth, playerAuth: auth, premiumEnabled: true, ...options });
+  const ai = options.aiFactory?.(store);
+  const afkUsage = new AfkUsageService({ store, now: options.now });
+  const api = createApi({ store, adminToken: ADMIN, adminAuth, accountAuth, playerAuth: auth, premiumEnabled: true, ai, afkUsage, ...options });
   const request = async (path, { method = 'GET', data, token, headers = {} } = {}) => {
     const response = await api(new Request(`http://127.0.0.1:8787${path}`, { method,
       headers: { ...(data !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...headers },
@@ -899,4 +903,92 @@ test('pet animation can be uploaded, selected and distributed to the mod', async
   assert.deepEqual(config.data,{animation:'animation.pet.spin',hasFile:true});
   const served=await request('/v1/resources/test-pet?type=animation');
   assert.equal(served.status,200); assert.deepEqual(served.data,JSON.parse(animation));
+});
+
+test('AI assistant exchanges a game session for a short scoped token and stores usage by account', async t => {
+  const calls = [];
+  const { store, request } = fixture(t, { aiFactory: database => new AiService({ store: database,
+    complete: async messages => {
+      calls.push(messages);
+      return { content: 'Respuesta segura', usage: { inputTokens: 12, outputTokens: 4 } };
+    },
+  }) });
+  const registered = await request('/v1/account/register', { method: 'POST', data: {
+    email: 'ai@example.com', password: 'correct-horse-ai', nick: 'AiPlayer',
+  } });
+  const accountId = registered.data.account.accountId;
+  const game = await request('/v1/account/game-token', { method: 'POST', token: registered.data.token, data: {} });
+  const assistant = await request('/v1/ai/token', { method: 'POST', token: game.data.token, data: {} });
+  assert.equal(assistant.status, 201);
+  assert.deepEqual(assistant.data.scopes, ['ai:chat', 'afk:assistant']);
+  assert.equal((await request('/v1/ai/chat', { method: 'POST', token: game.data.token, data: {
+    requestId: crypto.randomUUID(), conversationId: null, message: 'Hola',
+  } })).status, 401, 'a broad game token must not call the AI route directly');
+
+  const requestId = crypto.randomUUID();
+  const first = await request('/v1/ai/chat', { method: 'POST', token: assistant.data.token, data: {
+    requestId, conversationId: null, message: '¿Cómo inicio mi recorrido?',
+  } });
+  assert.equal(first.status, 200);
+  assert.equal(first.data.message.content, 'Respuesta segura');
+  assert.equal(store.aiUsageSince(accountId, 0).requests, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0].role, 'system');
+  assert.equal(calls[0].at(-1).content, '¿Cómo inicio mi recorrido?');
+
+  const replay = await request('/v1/ai/chat', { method: 'POST', token: assistant.data.token, data: {
+    requestId, conversationId: first.data.conversationId, message: 'No debe duplicarse',
+  } });
+  assert.equal(replay.status, 200);
+  assert.equal(replay.data.replayed, true);
+  assert.equal(store.aiUsageSince(accountId, 0).requests, 1);
+  assert.equal(calls.length, 1);
+});
+
+test('AI assistant token is revoked together with its parent MineLatino session', async t => {
+  const { request } = fixture(t, { aiFactory: store => new AiService({ store,
+    complete: async () => ({ content: 'ok', usage: {} }),
+  }) });
+  const registered = await request('/v1/account/register', { method: 'POST', data: {
+    email: 'revoke-ai@example.com', password: 'correct-horse-ai-2', nick: 'AiRevoke',
+  } });
+  const game = await request('/v1/account/game-token', { method: 'POST', token: registered.data.token, data: {} });
+  const assistant = await request('/v1/ai/token', { method: 'POST', token: game.data.token, data: {} });
+  await request('/v1/account/logout-all', { method: 'POST', token: registered.data.token, data: {} });
+  const result = await request('/v1/ai/status', { token: assistant.data.token });
+  assert.equal(result.status, 401);
+});
+
+test('AFK Farm time is assigned by admin, metered by server time, and blocks at zero', async t => {
+  let clock = 1_800_000_000_000;
+  const now = () => clock;
+  const { request } = fixture(t, { now });
+  const registered = await request('/v1/account/register', { method: 'POST', data: {
+    email: 'afk-time@example.com', password: 'correct-horse-afk', nick: 'AfkTimer',
+  } });
+  const accountId = registered.data.account.accountId;
+  const emptyToken = await request('/v1/afk/token', { method: 'POST', token: registered.data.token, data: {} });
+  assert.equal(emptyToken.status, 201);
+  assert.equal((await request('/v1/afk/status', { token: emptyToken.data.token })).data.remainingSeconds, 0);
+  assert.equal((await request('/v1/afk/sessions', { method: 'POST', token: emptyToken.data.token, data: {} })).status, 402);
+
+  const assigned = await request(`/v1/admin/player-accounts/${accountId}/afk-time`, { method: 'PUT', token: ADMIN,
+    data: { mode: 'set', seconds: 45, reason: 'Prueba automatizada' } });
+  assert.equal(assigned.status, 200);
+  assert.equal(assigned.data.remainingSeconds, 45);
+  const started = await request('/v1/afk/sessions', { method: 'POST', token: emptyToken.data.token, data: {} });
+  assert.equal(started.status, 201);
+  assert.equal(started.data.active, true);
+  clock += 20_000;
+  const heartbeat = await request(`/v1/afk/sessions/${started.data.sessionId}/heartbeat`, {
+    method: 'POST', token: emptyToken.data.token, data: {},
+  });
+  assert.equal(heartbeat.data.remainingSeconds, 25);
+  clock += 30_000;
+  const exhausted = await request(`/v1/afk/sessions/${started.data.sessionId}/heartbeat`, {
+    method: 'POST', token: emptyToken.data.token, data: {},
+  });
+  assert.equal(exhausted.data.remainingSeconds, 0);
+  assert.equal(exhausted.data.exhausted, true);
+  assert.equal((await request('/v1/afk/sessions', { method: 'POST', token: emptyToken.data.token, data: {} })).status, 402);
 });

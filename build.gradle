@@ -2,7 +2,7 @@ def targetMcVersion = project.findProperty('mcVersion') ?: '1.21.4'
 
 allprojects {
     group = 'com.minelatino.cosmetics'
-    version = '0.1.0-alpha.37'
+    version = '0.1.0-alpha.38'
     repositories { mavenCentral() }
 }
 subprojects {

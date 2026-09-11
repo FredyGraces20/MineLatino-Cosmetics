@@ -33,8 +33,11 @@ export function createHttpServer(api, origin, publicDir = null, { trustRailwayPr
     try {
       const headers = new Headers();
       for (let i = 0; i < req.rawHeaders.length; i += 2) headers.append(req.rawHeaders[i], req.rawHeaders[i + 1]);
+      const requestAbort = new AbortController();
+      req.once('aborted', () => requestAbort.abort());
+      res.once('close', () => { if (!res.writableEnded) requestAbort.abort(); });
       const request = new Request(`${origin}${req.url}`, {
-        method: req.method, headers,
+        method: req.method, headers, signal: requestAbort.signal,
         ...(['GET', 'HEAD'].includes(req.method) ? {} : { body: Readable.toWeb(req), duplex: 'half' }),
       });
       // Railway terminates TLS at its edge and supplies the original address in

@@ -282,6 +282,11 @@ td code { color: #9cabbc; font-family: ui-monospace, SFMono-Regular, Consolas, m
 .afk-step.active { border-color: rgba(56,216,242,.42); background: rgba(56,216,242,.07); color: var(--tx); }
 .afk-step.done { border-color: rgba(84,223,179,.16); color: #718092; }
 .afk-time { color: var(--ac); font: 700 12px/1 ui-monospace,SFMono-Regular,Consolas,monospace; font-variant-numeric: tabular-nums; }
+.afk-balance-card { display: grid; gap: 16px; margin-bottom: 30px; }
+.afk-balance { padding: 18px; display: grid; gap: 5px; border: 1px solid rgba(56,216,242,.2); border-radius: 13px; background: linear-gradient(135deg,rgba(56,216,242,.09),rgba(108,185,255,.035)); }
+.afk-balance span,.afk-balance small { color: var(--dm); }
+.afk-balance strong { color: var(--ac); font-size: 24px; font-variant-numeric: tabular-nums; }
+.afk-simulator-head { margin-top: 10px; }
 
 /* 3D editor keeps the same behavior with a cleaner shell */
 .ed-overlay { background: #080b12; }

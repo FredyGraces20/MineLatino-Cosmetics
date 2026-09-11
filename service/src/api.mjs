@@ -72,7 +72,7 @@ function validateResourceFile(buffer, filename) {
   return ext;
 }
 
-export function createApi({ store, adminToken, adminAuth, accountAuth, commerce, resourceDir, origin = 'http://127.0.0.1:8787', playerAuth = new PlayerAuth(), premiumEnabled = true, now = Date.now }) {
+export function createApi({ store, adminToken, adminAuth, accountAuth, commerce, ai, afkUsage, resourceDir, origin = 'http://127.0.0.1:8787', playerAuth = new PlayerAuth(), premiumEnabled = true, now = Date.now }) {
   requireThat(typeof adminToken === 'string' && adminToken.length >= 32, 'Configura una clave administrativa de al menos 32 caracteres');
   if (resourceDir) mkdirSync(resourceDir, { recursive: true });
   const rates = new Map();
@@ -115,6 +115,34 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
       const publicStorefront = method === 'GET' && (path === '/v1/storefront/catalog' || path === '/v1/storefront/payments' || /^\/v1\/resources\/[a-z0-9_-]+$/.test(path));
       requireThat(publicStorefront || !request.headers.get('origin') || request.headers.get('origin') === origin, 'Origen no permitido', 403);
       const authorization = request.headers.get('authorization');
+
+      // ── AFK Farm metered usage (short-lived restricted bearer) ───────
+      if (path.startsWith('/v1/afk/')) {
+        requireThat(accountAuth && afkUsage, 'Control de AFK Farm no disponible', 503);
+        if (method === 'POST' && path === '/v1/afk/token') return json(accountAuth.assistantToken(authorization), 201);
+        const capability = accountAuth.authenticateAssistant(authorization, 'afk:assistant');
+        if (method === 'GET' && path === '/v1/afk/status') return json(afkUsage.status(capability.accountId));
+        if (method === 'POST' && path === '/v1/afk/sessions') return json(afkUsage.start(capability.accountId), 201);
+        const afkSessionMatch = path.match(/^\/v1\/afk\/sessions\/([0-9a-f-]{36})\/(heartbeat|stop)$/i);
+        if (method === 'POST' && afkSessionMatch) return json(afkSessionMatch[2] === 'heartbeat'
+          ? afkUsage.heartbeat(capability.accountId, afkSessionMatch[1])
+          : afkUsage.stop(capability.accountId, afkSessionMatch[1]));
+      }
+
+      // ── AI assistant (short-lived, restricted bearer only) ────────────
+      if (path.startsWith('/v1/ai/')) {
+        requireThat(accountAuth, 'Cuentas MineLatino no configuradas', 503);
+        requireThat(ai, 'El asistente de IA no está disponible', 503);
+        if (method === 'POST' && path === '/v1/ai/token') {
+          return json(accountAuth.assistantToken(authorization), 201);
+        }
+        const assistant = accountAuth.authenticateAssistant(authorization, 'ai:chat');
+        if (method === 'GET' && path === '/v1/ai/status') return json(ai.status());
+        if (method === 'POST' && path === '/v1/ai/chat') return json(await ai.chat(assistant.accountId, await body(request), request.signal));
+        if (method === 'POST' && path === '/v1/ai/logout') {
+          accountAuth.revokeAssistant(authorization); return json({ ok: true });
+        }
+      }
 
       // ── MineLatino accounts (premium and offline players) ──────────────
       if (method === 'POST' && ['/v1/account/register', '/v1/account/login', '/v1/account/password/forgot', '/v1/account/password/reset'].includes(path)) {
@@ -390,6 +418,15 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
           const account = store.accountById(playerPasswordResetMatch[1], true);
           requireThat(account?.status === 'active', 'La cuenta no está activa', 409);
           return json(accountAuth.issuePasswordReset(playerPasswordResetMatch[1], actor), 201);
+        }
+        const playerAfkTimeMatch = path.match(/^\/v1\/admin\/player-accounts\/([a-f0-9]{32})\/afk-time$/);
+        if (playerAfkTimeMatch && method === 'GET') {
+          requireThat(afkUsage, 'Control de AFK Farm no disponible', 503);
+          return json(afkUsage.status(playerAfkTimeMatch[1]));
+        }
+        if (playerAfkTimeMatch && method === 'PUT') {
+          requireThat(afkUsage, 'Control de AFK Farm no disponible', 503);
+          return json(afkUsage.adminChange(playerAfkTimeMatch[1], await body(request), actor));
         }
         const accountGrantMatch = path.match(/^\/v1\/admin\/player-accounts\/([a-f0-9]{32})\/cosmetics$/);
         if (accountGrantMatch && ['POST','DELETE'].includes(method)) {

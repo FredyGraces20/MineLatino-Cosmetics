@@ -10,7 +10,6 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.network.chat.Component;
 import net.minecraft.client.input.MouseButtonEvent;
 
@@ -138,11 +137,11 @@ public final class WardrobeScreen extends Screen {
                 @Override protected void renderContents(GuiGraphics g,int mx,int my,float delta) {
                     WardrobeButton.panel(g,getX(),getY(),getWidth(),getHeight(),item.id().equals(selectedId) ? ACCENT : 0xFF404343,
                             isHoveredOrFocused() ? 0xFF38372F : 0xFF2B2D2D);
-                    var texture=client.resources().getOrDownloadTexture(item.id());
-                    // 1.21.11 expects normalized UV bounds here.  Passing 26 as
-                    // max UV sampled outside the texture and left cards blank.
-                    if(texture!=null) g.blit(texture,getX()+4,getY()+4,26,26,0f,1f,0f,1f);
-                    else g.drawCenteredString(font,"?",getX()+17,getY()+12,DIM);
+                    // Model PNGs are UV atlases, not product thumbnails. In 1.21.11
+                    // retained GUI rendering could expand this raw atlas over the whole
+                    // wardrobe. Keep materials exclusively in the isolated 3D preview.
+                    var resource=client.resources().getOrDownload(item.id());
+                    drawModelBadge(g,getX()+4,getY()+4,item.slot(),resource!=null,client.resources().error(item.id())!=null);
                     g.drawString(font,font.plainSubstrByWidth(item.name(),Math.max(8,getWidth()-39)),getX()+35,getY()+5,TEXT,false);
                     boolean saved=item.id().equals(controller.snapshot().equipped().get(item.slot()));
                     String label=saved ? "Equipado · "+CosmeticSlot.label(item.slot()) : CosmeticSlot.label(item.slot());
@@ -242,6 +241,16 @@ public final class WardrobeScreen extends Screen {
         if(x>=previewX && x<previewX+previewW && y>=top && y<bottom) { zoom=Math.max(.6f,Math.min(1.5f,zoom+(float)vertical*.08f)); return true; }
         if(x>=collectionX && y>=top && y<bottom) { changePage(vertical<0 ? 1 : -1); return true; }
         return super.mouseScrolled(x,y,horizontal,vertical);
+    }
+    private void drawModelBadge(GuiGraphics g,int x,int y,String slot,boolean ready,boolean failed) {
+        int stateColor=failed ? 0xFFFF6B6B : ready ? 0xFF62E8C6 : 0xFFE8A32E;
+        WardrobeButton.panel(g,x,y,26,26,0xFF54585B,0xFF181B1D);
+        g.fill(x+5,y+5,x+21,y+18,0xFF303538);
+        g.fill(x+7,y+3,x+19,y+5,0xFF454C50);
+        String symbol=switch(slot) { case "HAT" -> "H"; case "CAPE" -> "C"; case "WINGS" -> "A"; case "BACKPACK" -> "M"; case "PET" -> "P"; default -> "3D"; };
+        g.drawCenteredString(font,symbol,x+13,y+7,WardrobeButton.TEXT);
+        g.fill(x+5,y+21,x+21,y+23,0xFF292D30);
+        g.fill(x+5,y+21,x+(ready ? 21 : 10),y+23,stateColor);
     }
     @Override public boolean isPauseScreen() { return false; }
     @Override public void onClose() { minecraft.setScreen(parent); }

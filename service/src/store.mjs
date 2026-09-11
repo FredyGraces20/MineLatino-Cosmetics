@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 export class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -94,6 +94,17 @@ export class Store {
       CREATE INDEX IF NOT EXISTS password_reset_account ON password_reset_tokens(account_id,expires_at);
       CREATE INDEX IF NOT EXISTS account_presence_identity ON account_presence(name COLLATE NOCASE,profile_uuid,updated_at);
       CREATE INDEX IF NOT EXISTS account_entitlement_owners ON account_entitlements(cosmetic_id,active,account_id);
+      CREATE TABLE IF NOT EXISTS ai_conversations(id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES player_accounts(account_id) ON DELETE CASCADE, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS ai_messages(id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE, role TEXT NOT NULL CHECK(role IN ('user','assistant')), content TEXT NOT NULL, created_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS ai_requests(account_id TEXT NOT NULL REFERENCES player_accounts(account_id) ON DELETE CASCADE, request_id TEXT NOT NULL, conversation_id TEXT NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE, status TEXT NOT NULL CHECK(status IN ('pending','complete')), response_message_id TEXT, created_at INTEGER NOT NULL, completed_at INTEGER, PRIMARY KEY(account_id,request_id));
+      CREATE TABLE IF NOT EXISTS ai_usage(id INTEGER PRIMARY KEY AUTOINCREMENT, account_id TEXT NOT NULL REFERENCES player_accounts(account_id) ON DELETE CASCADE, conversation_id TEXT NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE, input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS ai_conversations_owner ON ai_conversations(account_id,updated_at);
+      CREATE INDEX IF NOT EXISTS ai_messages_conversation ON ai_messages(conversation_id,created_at);
+      CREATE INDEX IF NOT EXISTS ai_usage_owner_time ON ai_usage(account_id,created_at);
+      CREATE TABLE IF NOT EXISTS afk_time_balances(account_id TEXT PRIMARY KEY REFERENCES player_accounts(account_id) ON DELETE CASCADE, remaining_seconds INTEGER NOT NULL DEFAULT 0 CHECK(remaining_seconds>=0), updated_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS afk_usage_sessions(id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES player_accounts(account_id) ON DELETE CASCADE, status TEXT NOT NULL CHECK(status IN ('active','stopped','exhausted')), started_at INTEGER NOT NULL, last_heartbeat_at INTEGER NOT NULL, stopped_at INTEGER, consumed_seconds INTEGER NOT NULL DEFAULT 0 CHECK(consumed_seconds>=0));
+      CREATE INDEX IF NOT EXISTS afk_usage_owner ON afk_usage_sessions(account_id,started_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS afk_usage_one_active ON afk_usage_sessions(account_id) WHERE status='active';
       `);
     // Migration: ensure model columns exist (for databases that may have incomplete migration)
     const columns = this.db.prepare("PRAGMA table_info(resources)").all().map(c => c.name);
@@ -433,6 +444,126 @@ export class Store {
   touchAccountSession(tokenHash, now) { this.db.prepare('UPDATE account_sessions SET last_used_at=? WHERE token_hash=?').run(now, tokenHash); }
   deleteAccountSession(tokenHash) { this.db.prepare('DELETE FROM account_sessions WHERE token_hash=?').run(tokenHash); }
   deleteAccountSessions(accountId) { this.db.prepare('DELETE FROM account_sessions WHERE account_id=?').run(accountId); }
+
+  // ── AFK Farm metered usage ───────────────────────────────────────────
+
+  afkBalance(accountId) {
+    requireThat(this.accountById(accountId, true), 'Cuenta no encontrada', 404);
+    const row = this.db.prepare('SELECT remaining_seconds,updated_at FROM afk_time_balances WHERE account_id=?').get(accountId);
+    return { accountId, remainingSeconds: Number(row?.remaining_seconds ?? 0), updatedAt: row?.updated_at ?? null };
+  }
+
+  changeAfkBalance(accountId, seconds, mode, actor, reason, now = Date.now()) {
+    requireThat(Number.isSafeInteger(seconds) && seconds >= 0 && seconds <= 315_360_000, 'Tiempo inválido');
+    requireThat(['set','add'].includes(mode), 'Operación de tiempo inválida');
+    requireThat(typeof reason === 'string' && reason.trim().length <= 200, 'Motivo inválido');
+    requireThat(this.accountById(accountId, true), 'Cuenta no encontrada', 404);
+    return this.transaction(() => {
+      const current = this.afkBalance(accountId).remainingSeconds;
+      const remaining = mode === 'set' ? seconds : Math.min(315_360_000, current + seconds);
+      this.db.prepare(`INSERT INTO afk_time_balances(account_id,remaining_seconds,updated_at) VALUES(?,?,?)
+        ON CONFLICT(account_id) DO UPDATE SET remaining_seconds=excluded.remaining_seconds,updated_at=excluded.updated_at`)
+        .run(accountId, remaining, now);
+      this.audit(actor, 'afk-time.change', { accountId, mode, seconds, previousSeconds: current, remainingSeconds: remaining, reason: reason.trim() });
+      return { accountId, remainingSeconds: remaining, updatedAt: now };
+    });
+  }
+
+  activeAfkSession(accountId) {
+    return this.db.prepare("SELECT * FROM afk_usage_sessions WHERE account_id=? AND status='active'").get(accountId);
+  }
+
+  createAfkSession(accountId, id, now) {
+    this.db.prepare("UPDATE afk_usage_sessions SET status='stopped',stopped_at=? WHERE account_id=? AND status='active'").run(now, accountId);
+    this.db.prepare("INSERT INTO afk_usage_sessions(id,account_id,status,started_at,last_heartbeat_at) VALUES(?,?,'active',?,?)")
+      .run(id, accountId, now, now);
+    return this.afkSession(accountId, id);
+  }
+
+  afkSession(accountId, id) {
+    return this.db.prepare('SELECT * FROM afk_usage_sessions WHERE id=? AND account_id=?').get(id, accountId);
+  }
+
+  settleAfkSession(accountId, id, now, stop = false) {
+    return this.transaction(() => {
+      const session = this.afkSession(accountId, id);
+      requireThat(session, 'Sesión AFK no encontrada', 404);
+      const balance = this.afkBalance(accountId).remainingSeconds;
+      if (session.status !== 'active') return { session, remainingSeconds: balance, exhausted: session.status === 'exhausted' || balance === 0 };
+      // A missing client cannot spend unlimited time. Heartbeats normally arrive
+      // every 20 s; the 60 s cap closes the crash/network-loss window safely.
+      const elapsed = Math.min(60, Math.max(0, Math.floor((now - session.last_heartbeat_at) / 1000)));
+      const consumed = Math.min(balance, elapsed), remaining = balance - consumed;
+      const status = remaining === 0 ? 'exhausted' : (stop ? 'stopped' : 'active');
+      this.db.prepare(`INSERT INTO afk_time_balances(account_id,remaining_seconds,updated_at) VALUES(?,?,?)
+        ON CONFLICT(account_id) DO UPDATE SET remaining_seconds=excluded.remaining_seconds,updated_at=excluded.updated_at`)
+        .run(accountId, remaining, now);
+      this.db.prepare('UPDATE afk_usage_sessions SET status=?,last_heartbeat_at=?,stopped_at=?,consumed_seconds=consumed_seconds+? WHERE id=?')
+        .run(status, now, status === 'active' ? null : now, consumed, id);
+      return { session: this.afkSession(accountId, id), remainingSeconds: remaining, exhausted: remaining === 0 };
+    });
+  }
+
+  // ── MineLatino AI assistant ──────────────────────────────────────────
+
+  ensureAiConversation(accountId, conversationId, now = Date.now()) {
+    requireThat(this.accountById(accountId, true)?.status === 'active', 'La cuenta no está activa', 403);
+    const existing = this.db.prepare('SELECT account_id FROM ai_conversations WHERE id=?').get(conversationId);
+    requireThat(!existing || existing.account_id === accountId, 'Conversación no disponible', 404);
+    if (!existing) this.db.prepare('INSERT INTO ai_conversations VALUES(?,?,?,?)').run(conversationId, accountId, now, now);
+    return conversationId;
+  }
+
+  aiContext(accountId, conversationId, limit) {
+    requireThat(this.db.prepare('SELECT 1 FROM ai_conversations WHERE id=? AND account_id=?').get(conversationId, accountId), 'Conversación no disponible', 404);
+    return this.db.prepare(`SELECT role,content FROM (SELECT id,role,content,created_at FROM ai_messages
+      WHERE conversation_id=? ORDER BY created_at DESC,id DESC LIMIT ?) ORDER BY created_at,id`).all(conversationId, limit);
+  }
+
+  aiRequest(accountId, requestId) {
+    return this.db.prepare('SELECT * FROM ai_requests WHERE account_id=? AND request_id=?').get(accountId, requestId);
+  }
+
+  beginAiRequest(accountId, requestId, conversationId, now = Date.now()) {
+    this.db.prepare("INSERT INTO ai_requests VALUES(?,?,?,'pending',NULL,?,NULL)").run(accountId, requestId, conversationId, now);
+  }
+
+  completeAiRequest(accountId, requestId, conversationId, userContent, assistantContent, usage = {}, now = Date.now()) {
+    return this.transaction(() => {
+      const request = this.aiRequest(accountId, requestId);
+      requireThat(request?.status === 'pending' && request.conversation_id === conversationId, 'Solicitud no disponible', 409);
+      const userId = randomUUID(), assistantId = randomUUID();
+      this.db.prepare("INSERT INTO ai_messages VALUES(?,?, 'user',?,?)").run(userId, conversationId, userContent, now);
+      this.db.prepare("INSERT INTO ai_messages VALUES(?,?, 'assistant',?,?)").run(assistantId, conversationId, assistantContent, now + 1);
+      this.db.prepare("UPDATE ai_requests SET status='complete',response_message_id=?,completed_at=? WHERE account_id=? AND request_id=?")
+        .run(assistantId, now + 1, accountId, requestId);
+      this.db.prepare('UPDATE ai_conversations SET updated_at=? WHERE id=?').run(now + 1, conversationId);
+      const inputTokens = Number.isSafeInteger(usage.inputTokens) && usage.inputTokens >= 0 ? usage.inputTokens : 0;
+      const outputTokens = Number.isSafeInteger(usage.outputTokens) && usage.outputTokens >= 0 ? usage.outputTokens : 0;
+      this.db.prepare('INSERT INTO ai_usage(account_id,conversation_id,input_tokens,output_tokens,created_at) VALUES(?,?,?,?,?)')
+        .run(accountId, conversationId, inputTokens, outputTokens, now + 1);
+      return { conversationId, message: { id: assistantId, role: 'assistant', content: assistantContent, createdAt: now + 1 },
+        usage: { inputTokens, outputTokens } };
+    });
+  }
+
+  aiCompletedResponse(accountId, requestId) {
+    const row = this.db.prepare(`SELECT r.conversation_id,m.id,m.role,m.content,m.created_at FROM ai_requests r
+      JOIN ai_messages m ON m.id=r.response_message_id WHERE r.account_id=? AND r.request_id=? AND r.status='complete'`).get(accountId, requestId);
+    requireThat(row, 'Respuesta no disponible', 404);
+    return { conversationId: row.conversation_id,
+      message: { id: row.id, role: row.role, content: row.content, createdAt: row.created_at }, replayed: true };
+  }
+
+  failAiRequest(accountId, requestId) {
+    this.db.prepare("DELETE FROM ai_requests WHERE account_id=? AND request_id=? AND status='pending'").run(accountId, requestId);
+  }
+
+  aiUsageSince(accountId, since) {
+    const row = this.db.prepare(`SELECT COUNT(*) requests,COALESCE(SUM(input_tokens),0) inputTokens,
+      COALESCE(SUM(output_tokens),0) outputTokens FROM ai_usage WHERE account_id=? AND created_at>=?`).get(accountId, since);
+    return { requests: Number(row.requests), inputTokens: Number(row.inputTokens), outputTokens: Number(row.outputTokens) };
+  }
 
   createPasswordReset(accountId, tokenHash, expiresAt, actor = 'system', now = Date.now()) {
     requireThat(this.accountById(accountId, true), 'Cuenta no encontrada', 404);
