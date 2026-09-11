@@ -54,32 +54,39 @@ public final class HudOverlay {
         if (lines.isEmpty() && !id.equals(HudConfig.ARMOR) && !id.equals(HudConfig.COMPASS)
                 && !id.equals(HudConfig.INPUT)) return null;
         boolean vertical = HudConfig.VERTICAL.equals(widget.layout());
-        int width = id.equals(HudConfig.ARMOR) ? (vertical ? 46 : 104)
+        int baseWidth = id.equals(HudConfig.ARMOR) ? (vertical ? 58 : 112)
                 : id.equals(HudConfig.COMPASS) ? 214
                 : id.equals(HudConfig.INPUT) ? 78
                 : lines.stream().mapToInt(font::width).max().orElse(50) + 16;
-        int height = id.equals(HudConfig.ARMOR) ? (vertical ? 94 : 40)
+        int baseHeight = id.equals(HudConfig.ARMOR) ? (vertical ? 94 : 40)
                 : id.equals(HudConfig.COMPASS) ? 38
                 : id.equals(HudConfig.INPUT) ? 64
                 : Math.max(22, lines.size() * 11 + 10);
+        float scale = widget.scale() / 100f;
+        int width = Math.max(1, (int)Math.ceil(baseWidth * scale));
+        int height = Math.max(1, (int)Math.ceil(baseHeight * scale));
         int x = Math.max(2, Math.min(widget.x(), graphics.guiWidth() - width - 2));
         int y = Math.max(2, Math.min(widget.y(), graphics.guiHeight() - height - 2));
 
-        panel(graphics, x, y, width, height, widget.background(), widget.enabled());
+        graphics.pose().pushMatrix();
+        graphics.pose().translate(x, y);
+        graphics.pose().scale(scale, scale);
+        panel(graphics, 0, 0, baseWidth, baseHeight, widget);
 
         if (id.equals(HudConfig.ARMOR)) {
-            renderArmor(graphics, x, y, widget, editor);
+            renderArmor(graphics, 0, 0, widget, editor);
         } else if (id.equals(HudConfig.COMPASS)) {
-            renderCompass(graphics, x, y);
+            renderCompass(graphics, 0, 0);
         } else if (id.equals(HudConfig.INPUT)) {
-            renderInput(graphics, x, y);
+            renderInput(graphics, 0, 0);
         } else {
-            int lineY = y + 6;
+            int lineY = 6;
             for (String line : lines) {
-                graphics.drawString(font, line, x + 8, lineY, widget.enabled() ? TEXT : MUTED, false);
+                graphics.drawString(font, line, 8, lineY, widget.enabled() ? TEXT : MUTED, false);
                 lineY += 11;
             }
         }
+        graphics.pose().popMatrix();
         return new Bounds(id, x, y, width, height);
     }
 
@@ -126,7 +133,7 @@ public final class HudOverlay {
         EquipmentSlot[] slots = { EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET };
         boolean vertical = HudConfig.VERTICAL.equals(widget.layout());
         for (int i = 0; i < slots.length; i++) {
-            int itemX = x + 7 + (vertical ? 0 : i * 24);
+            int itemX = x + 5 + (vertical ? 0 : i * 26);
             int itemY = y + 4 + (vertical ? i * 22 : 0);
             ItemStack stack = minecraft.player == null ? ItemStack.EMPTY : minecraft.player.getItemBySlot(slots[i]);
             if (!stack.isEmpty()) {
@@ -134,7 +141,9 @@ public final class HudOverlay {
                 int percent = stack.isDamageableItem()
                         ? Math.max(0, Math.round((stack.getMaxDamage() - stack.getDamageValue()) * 100f / stack.getMaxDamage()))
                         : 100;
-                graphics.drawString(font, percent + "%", vertical ? itemX + 19 : itemX - 1,
+                String label = percent + "%";
+                int percentX = vertical ? x + 27 : itemX + 8 - font.width(label) / 2;
+                graphics.drawString(font, label, percentX,
                         vertical ? itemY + 4 : y + 26, durabilityColor(percent), false);
             } else {
                 graphics.drawString(font, "-", itemX + 5, itemY + 5, MUTED, false);
@@ -190,11 +199,29 @@ public final class HudOverlay {
                 down ? 0xFF071217 : TEXT);
     }
 
-    private static void panel(GuiGraphics graphics, int x, int y, int width, int height, int background, boolean enabled) {
-        rounded(graphics, x + 2, y + 2, width, height, 0x50000000);
-        rounded(graphics, x, y, width, height, enabled ? BORDER : 0xFF59636D);
-        rounded(graphics, x + 1, y + 1, width - 2, height - 2, background);
-        graphics.fill(x + 6, y + 1, x + width - 6, y + 2, 0x28FFFFFF);
+    private static void panel(GuiGraphics graphics, int x, int y, int width, int height, HudConfig.Widget widget) {
+        if (!widget.showBackground() && !widget.showBorder()) return;
+        int opacity = widget.opacity();
+        if (widget.showBackground() && opacity > 0) {
+            rounded(graphics, x + 2, y + 2, width, height, alpha(0x50000000, opacity));
+        }
+        if (widget.showBorder()) {
+            rounded(graphics, x, y, width, height,
+                    alpha(widget.enabled() ? BORDER : 0xFF59636D, opacity));
+        }
+        if (widget.showBackground()) {
+            int inset = widget.showBorder() ? 1 : 0;
+            rounded(graphics, x + inset, y + inset, width - inset * 2, height - inset * 2,
+                    alpha(widget.background(), opacity));
+            if (width > 12) graphics.fill(x + 6, y + inset, x + width - 6, y + inset + 1,
+                    alpha(0x28FFFFFF, opacity));
+        }
+    }
+
+    private static int alpha(int color, int opacity) {
+        int original = color >>> 24;
+        int adjusted = original * Math.max(0, Math.min(100, opacity)) / 100;
+        return (color & 0x00FFFFFF) | (adjusted << 24);
     }
 
     private static void rounded(GuiGraphics graphics, int x, int y, int width, int height, int color) {

@@ -60,4 +60,51 @@ final class HudConfigTest {
         assertTrue(config.widget(HudConfig.ARMOR).background() != initialBackground);
         assertFalse(HudConfig.backgroundName(config.widget(HudConfig.ARMOR).background()).isBlank());
     }
+
+    @Test
+    void controlsEachWidgetsBackgroundBorderOpacityAndScaleIndependently() {
+        HudConfig config = HudConfig.get(temporaryDirectory.resolve("appearance-controls"));
+
+        config.toggleBackground(HudConfig.ARMOR);
+        config.toggleBorder(HudConfig.ARMOR);
+        config.adjustOpacity(HudConfig.ARMOR, -30);
+        config.adjustScale(HudConfig.ARMOR, 40);
+
+        HudConfig.Widget armor = config.widget(HudConfig.ARMOR);
+        assertFalse(armor.showBackground());
+        assertFalse(armor.showBorder());
+        assertEquals(70, armor.opacity());
+        assertEquals(140, armor.scale());
+        assertTrue(config.widget(HudConfig.FPS).showBackground());
+        assertTrue(config.widget(HudConfig.FPS).showBorder());
+        assertEquals(100, config.widget(HudConfig.FPS).scale());
+
+        config.adjustOpacity(HudConfig.ARMOR, -500);
+        config.adjustScale(HudConfig.ARMOR, 500);
+        assertEquals(0, config.widget(HudConfig.ARMOR).opacity());
+        assertEquals(200, config.widget(HudConfig.ARMOR).scale());
+    }
+
+    @Test
+    void migratesVersionOneHudWithoutRemovingItsExistingPanel() throws Exception {
+        Path game = temporaryDirectory.resolve("legacy-hud");
+        Path saved = game.resolve("config/minelatino-cosmetics/hud.json");
+        Files.createDirectories(saved.getParent());
+        Files.writeString(saved, """
+                {
+                  "version": 1,
+                  "widgets": {
+                    "fps": { "enabled": true, "x": 20, "y": 30,
+                             "layout": "horizontal", "background": -1206646752 }
+                  }
+                }
+                """);
+
+        HudConfig.Widget migrated = HudConfig.get(game).widget(HudConfig.FPS);
+        assertTrue(migrated.showBackground());
+        assertTrue(migrated.showBorder());
+        assertEquals(100, migrated.opacity());
+        assertEquals(100, migrated.scale());
+        assertEquals(20, migrated.x());
+    }
 }
