@@ -57,8 +57,9 @@ public final class PauseMenu {
                     && contents.getKey().equals("menu.playerReporting")) {
                 int x = old.getX(), y = old.getY(), w = old.getWidth(), h = old.getHeight();
                 old.setX(-0x4000);
-                add.accept(Button.builder(Component.literal("Personalizar"), button ->
-                        minecraft.gui.setScreen(new HudEditorScreen(screen))).bounds(x, y, w, h).build());
+                add.accept(new PauseMenuIconButton(x, y, w, h, "Personalizar",
+                        PauseMenuIconButton.Icon.GEAR,
+                        () -> minecraft.gui.setScreen(new HudEditorScreen(screen))));
             }
         }
         if (!config.enabled()) return;
@@ -95,7 +96,7 @@ public final class PauseMenu {
         int buttonWidth = count == 0 ? 150 : Math.min(150, (screen.width - 12 - (count - 1) * 4) / count);
         int startX = (screen.width - count * buttonWidth - Math.max(0, count - 1) * 4) / 2;
         for (MenuConfig.Entry entry : config.buttons()) {
-            add.accept(Button.builder(Component.literal(entry.label()), button -> {
+            Runnable action = () -> {
                 if (entry.action() == MenuPolicy.Action.WARDROBE) {
                     minecraft.gui.setScreen(new WardrobeScreen(screen));
                 } else {
@@ -105,7 +106,27 @@ public final class PauseMenu {
                         minecraft.gui.setScreen(screen);
                     }, uri.toString(), true));
                 }
-            }).bounds(startX + index++ * (buttonWidth + 4), 6, buttonWidth, 20).build());
+            };
+            int x = startX + index++ * (buttonWidth + 4);
+            PauseMenuIconButton.Icon icon = compactIcon(entry);
+            if (icon != null) {
+                add.accept(new PauseMenuIconButton(x, 6, buttonWidth, 20, entry.label(), icon, action));
+            } else {
+                add.accept(Button.builder(Component.literal(entry.label()), button -> action.run())
+                        .bounds(x, 6, buttonWidth, 20).build());
+            }
         }
+    }
+
+    private static PauseMenuIconButton.Icon compactIcon(MenuConfig.Entry entry) {
+        String label = entry.label().toLowerCase(java.util.Locale.ROOT);
+        String url = entry.url() == null ? "" : entry.url().toLowerCase(java.util.Locale.ROOT);
+        if (label.contains("tienda") || label.contains("shop") || label.contains("store")) {
+            return PauseMenuIconButton.Icon.CART;
+        }
+        if (label.contains("discord") || url.contains("discord.com")) {
+            return PauseMenuIconButton.Icon.DISCORD;
+        }
+        return null;
     }
 }
