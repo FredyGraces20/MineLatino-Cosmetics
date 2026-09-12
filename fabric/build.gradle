@@ -1,4 +1,4 @@
-plugins { id 'fabric-loom' version '1.9.2' }
+plugins { id 'net.fabricmc.fabric-loom-remap' }
 
 loom {
     mixin {
@@ -74,7 +74,8 @@ processResources {
     inputs.property 'version', project.version
     inputs.property 'mcVersion', mcVersion
     inputs.property 'fabricLoader', fabricLoader
+    inputs.property 'javaVersion', 21
     filesMatching('fabric.mod.json') {
-        expand(version: project.version, mcVersion: mcVersion, fabricLoader: fabricLoader)
+        expand(version: project.version, mcVersion: mcVersion, fabricLoader: fabricLoader, javaVersion: 21)
     }
 }

@@ -1,0 +1,37 @@
+plugins { id 'net.fabricmc.fabric-loom' }
+
+loom {
+    mixin {
+        defaultRefmapName = 'minelatino_cosmetics.refmap.json'
+    }
+}
+
+def mcVersion = project.findProperty('mcVersion') ?: '26.2'
+def props = new Properties()
+file('../versions.properties').withInputStream { props.load(it) }
+def fabricLoader = props.getProperty("${mcVersion}.fabric.loader") ?: '0.19.5'
+
+base.archivesName = "minelatino-cosmetics-fabric-${mcVersion}"
+
+dependencies {
+    minecraft "com.mojang:minecraft:${mcVersion}"
+    implementation "net.fabricmc:fabric-loader:${fabricLoader}"
+}
+
+def versionSrc = "../client-${mcVersion}"
+
+sourceSets.main {
+    java.srcDirs '../common/src/main/java', "${versionSrc}/src/main/java"
+    resources.srcDirs "${versionSrc}/src/main/resources"
+}
+
+processResources {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    inputs.property 'version', project.version
+    inputs.property 'mcVersion', mcVersion
+    inputs.property 'fabricLoader', fabricLoader
+    inputs.property 'javaVersion', 25
+    filesMatching('fabric.mod.json') {
+        expand(version: project.version, mcVersion: mcVersion, fabricLoader: fabricLoader, javaVersion: 25)
+    }
+}

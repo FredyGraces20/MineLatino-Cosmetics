@@ -1,4 +1,4 @@
-# MineLatino Cosmetics — 1.21.4 / 1.21.11
+# MineLatino Cosmetics — 1.21.4 / 1.21.11 / 26.2
 
 Versión **experimental**, no una versión comercial. Fabric y Forge comparten
 el código de cliente con mappings oficiales de Mojang. No modifica el launcher
@@ -6,7 +6,7 @@ ni el backend de producción y no publica actualizaciones automáticamente.
 
 ## Implementado
 
-- Proyectos Fabric y Forge, Java 21, para Minecraft 1.21.4 y 1.21.11.
+- Proyectos Fabric y Forge para Minecraft 1.21.4, 1.21.11 y 26.2.
 - Botón en ESC que abre el armario; cierre y regreso al menú original.
 - Configuración interna `config/minelatino-cosmetics/menu.json`, recargada al abrir ESC.
 - Hasta tres botones adicionales: `WARDROBE` o `WEBSITE` (HTTPS MineLatino y confirmación).
@@ -21,7 +21,7 @@ ni el backend de producción y no publica actualizaciones automáticamente.
 
 ## Compilar
 
-Con JDK 21; el wrapper descarga y verifica Gradle 8.12:
+Con JDK 21 para Minecraft 1.21.x y JDK 25 para Minecraft 26.2:
 
 ```powershell
 $env:JAVA_HOME='C:\Program Files\Java\jdk-21.0.10'
@@ -31,7 +31,8 @@ cd forge
 .\gradlew.bat build
 ```
 
-Forge usa su wrapper propio (Gradle 9.5); Fabric usa el wrapper raíz (Gradle 8.12).
+Las compilaciones usan el wrapper de Gradle 9.5 incluido en `forge/`, necesario para
+Fabric Loom 1.17 y Minecraft 26.2.
 `MINELATINO_BUILD_ROOT` evita bloqueos de archivos generados cuando el repositorio
 está sincronizado por OneDrive. Usar el JAR Fabric o Forge correspondiente, nunca ambos.
 No instalar en servidores dedicados. Los directorios `run` de desarrollo son aislados.

@@ -4,9 +4,24 @@ pluginManagement {
         maven { url = 'https://maven.minecraftforge.net/' }
         gradlePluginPortal()
     }
+    resolutionStrategy {
+        eachPlugin {
+            if (requested.id.id == 'net.fabricmc.fabric-loom') {
+                useVersion('1.17.20')
+            }
+            if (requested.id.id == 'net.fabricmc.fabric-loom-remap') {
+                useVersion('1.17.20')
+            }
+        }
+    }
 }
 rootProject.name = 'minelatino-cosmetics'
 
 // ForgeGradle 7 requires Gradle 9 while Fabric Loom currently uses the root
 // Gradle 8 build. Forge therefore has its own supported wrapper in /forge.
 include 'common', 'fabric'
+
+def targetMinecraft = providers.gradleProperty('mcVersion').orElse('1.21.4').get()
+if (targetMinecraft == '26.2') {
+    project(':fabric').buildFileName = 'build-26.2.gradle'
+}

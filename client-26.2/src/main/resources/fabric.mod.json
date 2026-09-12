@@ -7,5 +7,5 @@
   "environment": "client",
   "license": "All Rights Reserved",
   "mixins": ["minelatino_cosmetics.mixins.json"],
-  "depends": { "fabricloader": ">=${fabricLoader}", "minecraft": "${mcVersion}", "java": ">=${javaVersion}" }
+  "depends": { "fabricloader": ">=${fabricLoader}", "minecraft": "${mcVersion}", "java": ">=25" }
 }

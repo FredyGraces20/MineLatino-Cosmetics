@@ -2,7 +2,7 @@ def targetMcVersion = project.findProperty('mcVersion') ?: '1.21.4'
 
 allprojects {
     group = 'com.minelatino.cosmetics'
-    version = '0.1.0-alpha.45'
+    version = '0.1.0-alpha.46'
     repositories { mavenCentral() }
 }
 subprojects {
@@ -13,8 +13,9 @@ subprojects {
     layout.buildDirectory = externalBuildRoot
         ? file("${externalBuildRoot}/${targetMcVersion}/${project.name}")
         : rootProject.layout.projectDirectory.dir("build/${targetMcVersion}/${project.name}")
-    java.toolchain.languageVersion = JavaLanguageVersion.of(21)
-    tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8'; options.release = 21 }
+    def targetJavaVersion = targetMcVersion == '26.2' ? 25 : 21
+    java.toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8'; options.release = targetJavaVersion }
     tasks.withType(Test).configureEach { useJUnitPlatform() }
 }
 

@@ -6,15 +6,15 @@ plugins {
 }
 
 group = 'com.minelatino.cosmetics'
-version = '0.1.0-alpha.45'
-
-java.toolchain.languageVersion = JavaLanguageVersion.of(21)
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = 'UTF-8'
-    options.release = 21
-}
+version = '0.1.0-alpha.46'
 
 def mcVersion = project.findProperty('mcVersion') ?: '1.21.4'
+def targetJavaVersion = mcVersion == '26.2' ? 25 : 21
+java.toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = targetJavaVersion
+}
 def props = new Properties()
 file('../versions.properties').withInputStream { props.load(it) }
 def forgeVersion = props.getProperty("${mcVersion}.forge.version") ?: '54.1.0'
@@ -40,7 +40,7 @@ repositories {
 }
 dependencies {
     implementation minecraft.dependency("net.minecraftforge:forge:${mcVersion}-${forgeVersion}")
-    if (mcVersion == '1.21.11') {
+    if (mcVersion == '1.21.11' || mcVersion == '26.2') {
         annotationProcessor 'net.minecraftforge:eventbus-validator:7.0.5'
     }
 }
@@ -48,9 +48,11 @@ def versionSrc = "../client-${mcVersion}"
 def selectedClient = mcVersion != '1.21.4' && file(versionSrc).exists() ? versionSrc : '../client'
 def versionForgeSrc = "src/main/java-${mcVersion}"
 def selectedForgeSrc = file(versionForgeSrc).exists() ? versionForgeSrc : 'src/main/java'
+def versionForgeResources = "src/main/resources-${mcVersion}"
+def selectedForgeResources = file(versionForgeResources).exists() ? versionForgeResources : 'src/main/resources'
 sourceSets.main {
     java.setSrcDirs([selectedForgeSrc, '../common/src/main/java', "${selectedClient}/src/main/java"])
-    resources.setSrcDirs(['src/main/resources', "${selectedClient}/src/main/resources"])
+    resources.setSrcDirs([selectedForgeResources, "${selectedClient}/src/main/resources"])
     resources.exclude 'minelatino_cosmetics.mixins.json'
     resources.exclude 'fabric.mod.json'
 }
