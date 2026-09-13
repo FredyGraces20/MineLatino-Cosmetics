@@ -574,9 +574,24 @@ test('admin static files receive browser security headers', async t => {
   t.after(() => new Promise(resolve => server.close(resolve)));
   const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
   assert.match(response.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+  assert.doesNotMatch(response.headers.get('content-security-policy'), /'unsafe-inline'/);
   assert.equal(response.headers.get('x-frame-options'), 'DENY');
   assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+});
+
+test('admin CSP allowlists exact inline code with hashes', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'minelatino-admin-csp-'));
+  writeFileSync(join(directory, 'index.html'), '<!doctype html><style>body{color:red}</style><button onclick="safeAction()" style="display:block">Go</button><script>function safeAction(){}</script>');
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const server = createHttpServer(async () => Response.json({ ok: true }), 'http://127.0.0.1', directory);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
+  const csp = response.headers.get('content-security-policy');
+  assert.doesNotMatch(csp, /'unsafe-inline'/);
+  assert.match(csp, /script-src 'self' 'unsafe-hashes' 'sha256-/);
+  assert.match(csp, /style-src 'self' 'unsafe-hashes' 'sha256-/);
 });
 
 // ── Admin auth tests ──────────────────────────────────────────────────

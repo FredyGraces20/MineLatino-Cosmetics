@@ -3,16 +3,39 @@ import { Readable } from 'node:stream';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, extname, resolve, relative, isAbsolute } from 'node:path';
 import { isIP } from 'node:net';
+import { createHash } from 'node:crypto';
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png' };
-const STATIC_SECURITY_HEADERS = {
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
-  'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY',
-  'Referrer-Policy': 'no-referrer', 'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
-};
+const cspHash = value => `'sha256-${createHash('sha256').update(value).digest('base64')}'`;
+
+function staticSecurityHeaders(publicDir) {
+  const scriptHashes = new Set(), styleHashes = new Set();
+  const indexPath = publicDir ? join(publicDir, 'index.html') : '';
+  if (indexPath && existsSync(indexPath)) {
+    const html = readFileSync(indexPath, 'utf8');
+    for (const match of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) {
+      if (match[1]) scriptHashes.add(cspHash(match[1]));
+    }
+    for (const match of html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)) {
+      if (match[1]) styleHashes.add(cspHash(match[1]));
+    }
+    // CSP3's unsafe-hashes permits only these exact, developer-controlled
+    // handler/style attributes; arbitrary injected inline code remains blocked.
+    for (const match of html.matchAll(/\son[a-z]+\s*=\s*(["'])(.*?)\1/gis)) scriptHashes.add(cspHash(match[2]));
+    for (const match of html.matchAll(/\sstyle\s*=\s*(["'])(.*?)\1/gis)) styleHashes.add(cspHash(match[2]));
+  }
+  const scriptSources = ["'self'", ...(scriptHashes.size ? ["'unsafe-hashes'", ...scriptHashes] : [])];
+  const styleSources = ["'self'", ...(styleHashes.size ? ["'unsafe-hashes'", ...styleHashes] : [])];
+  return {
+    'Content-Security-Policy': `default-src 'self'; script-src ${scriptSources.join(' ')}; style-src ${styleSources.join(' ')}; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
+    'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer', 'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  };
+}
 
 /** Transport only; injectable API keeps HTTP smoke tests network-isolated. */
 export function createHttpServer(api, origin, publicDir = null, { trustRailwayProxy = false, trustedProxyAddresses = [] } = {}) {
+  const staticHeaders = staticSecurityHeaders(publicDir);
   return createServer({ maxHeaderSize: 8192, requestTimeout: 15_000, headersTimeout: 10_000 }, async (req, res) => {
     // Serve static files for the admin panel (only GET, only from publicDir)
     if (publicDir && req.method === 'GET' && !req.url.startsWith('/v1/') && !req.url.startsWith('/health')) {
@@ -25,7 +48,7 @@ export function createHttpServer(api, origin, publicDir = null, { trustRailwayPr
       }
       if (existsSync(filePath)) {
         const ext = extname(filePath);
-        res.writeHead(200, { ...STATIC_SECURITY_HEADERS, 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+        res.writeHead(200, { ...staticHeaders, 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-store' });
         res.end(readFileSync(filePath));
         return;
       }
