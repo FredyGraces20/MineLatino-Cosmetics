@@ -76,7 +76,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS equipment(uuid TEXT NOT NULL, slot TEXT NOT NULL, cosmetic_id TEXT NOT NULL, PRIMARY KEY(uuid,slot), FOREIGN KEY(uuid,cosmetic_id) REFERENCES entitlements(uuid,cosmetic_id));
       CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, action TEXT NOT NULL, payload TEXT NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS menus(revision INTEGER PRIMARY KEY AUTOINCREMENT, config TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS cosmetic_products(cosmetic_id TEXT PRIMARY KEY REFERENCES cosmetics(id), description TEXT NOT NULL, amount_minor INTEGER, currency TEXT NOT NULL DEFAULT 'USD');
+      CREATE TABLE IF NOT EXISTS cosmetic_products(cosmetic_id TEXT PRIMARY KEY REFERENCES cosmetics(id), description TEXT NOT NULL, amount_minor INTEGER, currency TEXT NOT NULL DEFAULT 'USD', stock_mode TEXT NOT NULL DEFAULT 'unlimited' CHECK(stock_mode IN ('unlimited','limited')), stock_remaining INTEGER CHECK(stock_remaining IS NULL OR stock_remaining>=0));
       CREATE INDEX IF NOT EXISTS entitlement_owners ON entitlements(cosmetic_id,active,uuid);
       CREATE TABLE IF NOT EXISTS admins(username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, password_salt TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'admin', created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS resources(cosmetic_id TEXT PRIMARY KEY REFERENCES cosmetics(id), file_path TEXT NOT NULL, sha256 TEXT NOT NULL, file_size INTEGER NOT NULL, content_type TEXT NOT NULL, uploaded_at INTEGER NOT NULL, model_path TEXT, model_sha256 TEXT, model_size INTEGER, avatar_path TEXT, avatar_sha256 TEXT, avatar_size INTEGER);
@@ -120,6 +120,9 @@ export class Store {
     if (!columns.includes('avatar_path')) this.db.prepare('ALTER TABLE resources ADD COLUMN avatar_path TEXT').run();
     if (!columns.includes('avatar_sha256')) this.db.prepare('ALTER TABLE resources ADD COLUMN avatar_sha256 TEXT').run();
     if (!columns.includes('avatar_size')) this.db.prepare('ALTER TABLE resources ADD COLUMN avatar_size INTEGER').run();
+    const productColumns = this.db.prepare("PRAGMA table_info(cosmetic_products)").all().map(c => c.name);
+    if (!productColumns.includes('stock_mode')) this.db.prepare("ALTER TABLE cosmetic_products ADD COLUMN stock_mode TEXT NOT NULL DEFAULT 'unlimited' CHECK(stock_mode IN ('unlimited','limited'))").run();
+    if (!productColumns.includes('stock_remaining')) this.db.prepare('ALTER TABLE cosmetic_products ADD COLUMN stock_remaining INTEGER CHECK(stock_remaining IS NULL OR stock_remaining>=0)').run();
     this.migrateCosmeticSlots();
     this.migrateCosmeticTransforms();
     this.migrateLegacyAccountEntitlements();
@@ -242,10 +245,16 @@ export class Store {
       if (input.product !== undefined) {
         const p = input.product;
         requireThat(p && typeof p.description === 'string' && p.description.length <= 2000, 'Descripción inválida (máximo 2000 caracteres)');
-        requireThat(p.amountMinor === null || (Number.isSafeInteger(p.amountMinor) && p.amountMinor > 0 && p.amountMinor <= 100000000), 'Precio inválido; usa unidades menores enteras o null');
+        requireThat(p.amountMinor === null || (Number.isSafeInteger(p.amountMinor) && p.amountMinor >= 0 && p.amountMinor <= 100000000), 'Precio inválido; usa unidades menores enteras o null');
         requireThat(['USD', 'EUR', 'UYU', 'ARS', 'BRL', 'MXN'].includes(p.currency), 'Moneda no admitida');
-        this.db.prepare('INSERT INTO cosmetic_products VALUES(?,?,?,?) ON CONFLICT(cosmetic_id) DO UPDATE SET description=excluded.description,amount_minor=excluded.amount_minor,currency=excluded.currency')
-          .run(id, p.description.trim(), p.amountMinor, p.currency);
+        const stockMode = p.stockMode ?? 'unlimited';
+        requireThat(['unlimited', 'limited'].includes(stockMode), 'Modo de stock inválido');
+        const stockRemaining = stockMode === 'limited' ? p.stockRemaining : null;
+        requireThat(stockMode !== 'limited' || (Number.isSafeInteger(stockRemaining) && stockRemaining >= 0 && stockRemaining <= 100000000), 'Stock inválido');
+        this.db.prepare(`INSERT INTO cosmetic_products(cosmetic_id,description,amount_minor,currency,stock_mode,stock_remaining) VALUES(?,?,?,?,?,?)
+          ON CONFLICT(cosmetic_id) DO UPDATE SET description=excluded.description,amount_minor=excluded.amount_minor,
+          currency=excluded.currency,stock_mode=excluded.stock_mode,stock_remaining=excluded.stock_remaining`)
+          .run(id, p.description.trim(), p.amountMinor, p.currency, stockMode, stockRemaining);
       }
       if (input.status !== 'published') this.db.prepare('DELETE FROM equipment WHERE cosmetic_id=?').run(id);
       this.audit(actor, 'catalog.save', { id, name, slot: input.slot, status: input.status, revision });
@@ -749,7 +758,11 @@ export class Store {
 
   product(id) {
     const row = this.db.prepare('SELECT * FROM cosmetic_products WHERE cosmetic_id=?').get(cosmeticId(id));
-    return { description: row?.description ?? '', amountMinor: row?.amount_minor ?? null, currency: row?.currency ?? 'USD' };
+    return {
+      description: row?.description ?? '', amountMinor: row?.amount_minor ?? null, currency: row?.currency ?? 'USD',
+      stockMode: row?.stock_mode === 'limited' ? 'limited' : 'unlimited',
+      stockRemaining: row?.stock_mode === 'limited' ? Number(row.stock_remaining ?? 0) : null,
+    };
   }
 
   deleteResource(id) {

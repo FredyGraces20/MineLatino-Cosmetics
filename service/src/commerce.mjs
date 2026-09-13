@@ -25,13 +25,28 @@ export class Commerce {
       provider TEXT NOT NULL, amount_minor INTEGER NOT NULL, currency TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending', idempotency_key TEXT NOT NULL,
       payment_id TEXT, created_at INTEGER NOT NULL, owner_type TEXT NOT NULL DEFAULT 'premium_uuid',
-      updated_at INTEGER, delivered_at INTEGER, cancelled_at INTEGER,
+      updated_at INTEGER, delivered_at INTEGER, cancelled_at INTEGER, stock_reserved INTEGER NOT NULL DEFAULT 0,
       UNIQUE(owner,idempotency_key), UNIQUE(provider,payment_id));`);
     const columns = store.db.prepare("PRAGMA table_info(cosmetic_orders)").all().map(column => column.name);
     if (!columns.includes('owner_type')) store.db.prepare("ALTER TABLE cosmetic_orders ADD COLUMN owner_type TEXT NOT NULL DEFAULT 'premium_uuid'").run();
     if (!columns.includes('updated_at')) store.db.prepare('ALTER TABLE cosmetic_orders ADD COLUMN updated_at INTEGER').run();
     if (!columns.includes('delivered_at')) store.db.prepare('ALTER TABLE cosmetic_orders ADD COLUMN delivered_at INTEGER').run();
     if (!columns.includes('cancelled_at')) store.db.prepare('ALTER TABLE cosmetic_orders ADD COLUMN cancelled_at INTEGER').run();
+    if (!columns.includes('stock_reserved')) store.db.prepare('ALTER TABLE cosmetic_orders ADD COLUMN stock_reserved INTEGER NOT NULL DEFAULT 0').run();
+  }
+  reserveStock(id, product) {
+    if (product.stockMode !== 'limited') return 0;
+    const reserved = this.store.db.prepare(`UPDATE cosmetic_products SET stock_remaining=stock_remaining-1
+      WHERE cosmetic_id=? AND stock_mode='limited' AND stock_remaining>0`).run(id);
+    requireThat(Number(reserved.changes) === 1, 'Producto agotado', 409);
+    return 1;
+  }
+  grant(ownerType, owner, id) {
+    if (ownerType === 'account') {
+      this.store.db.prepare('INSERT INTO account_entitlements VALUES(?,?,1) ON CONFLICT(account_id,cosmetic_id) DO UPDATE SET active=1').run(owner, id);
+    } else {
+      this.store.db.prepare('INSERT INTO entitlements VALUES(?,?,1) ON CONFLICT(uuid,cosmetic_id) DO UPDATE SET active=1').run(owner, id);
+    }
   }
   providers() {
     return PAYMENT_PROVIDERS.map(id => ({
@@ -57,17 +72,44 @@ export class Commerce {
         return publicOrder(old);
       }
       const item = this.store.cosmetic(id), product = this.store.product(id);
-      requireThat(item.status === 'published' && product.amountMinor !== null, 'Producto no disponible', 409);
+      requireThat(item.status === 'published' && product.amountMinor !== null && product.amountMinor > 0, product.amountMinor === 0 ? 'Este cosmético se obtiene gratis' : 'Producto no disponible', 409);
       const owns = ownerType === 'account'
         ? this.store.db.prepare('SELECT 1 FROM account_entitlements WHERE account_id=? AND cosmetic_id=? AND active=1').get(owner, id)
         : this.store.db.prepare('SELECT 1 FROM entitlements WHERE uuid=? AND cosmetic_id=? AND active=1').get(owner, id);
       requireThat(!owns, 'Ya tienes este cosmético', 409);
       requireThat(!this.store.db.prepare("SELECT 1 FROM cosmetic_orders WHERE owner=? AND cosmetic_id=? AND status='pending'").get(owner, id), 'Ya hay una compra pendiente para este cosmético', 409);
       requireThat(this.providers().some(entry => entry.id === provider && entry.enabled), 'Proveedor todavía no disponible', 503);
+      const stockReserved = this.reserveStock(id, product);
       const orderId = randomUUID(), createdAt = Date.now();
-      this.store.db.prepare('INSERT INTO cosmetic_orders(id,owner,cosmetic_id,provider,amount_minor,currency,idempotency_key,created_at,updated_at,owner_type) VALUES(?,?,?,?,?,?,?,?,?,?)')
-        .run(orderId, owner, id, provider, product.amountMinor, product.currency, idempotencyKey, createdAt, createdAt, ownerType);
+      this.store.db.prepare('INSERT INTO cosmetic_orders(id,owner,cosmetic_id,provider,amount_minor,currency,idempotency_key,created_at,updated_at,owner_type,stock_reserved) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+        .run(orderId, owner, id, provider, product.amountMinor, product.currency, idempotencyKey, createdAt, createdAt, ownerType, stockReserved);
       this.store.audit('commerce', 'order.created', { orderId, owner, ownerType, cosmeticId: id, provider });
+      return publicOrder(this.store.db.prepare('SELECT o.*,c.name cosmetic_name FROM cosmetic_orders o JOIN cosmetics c ON c.id=o.cosmetic_id WHERE o.id=?').get(orderId));
+    });
+  }
+  claimFree(identity, id, idempotencyKey) {
+    const accountOwner = typeof identity?.accountId === 'string' && this.store.accountById(identity.accountId, true);
+    requireThat(accountOwner, 'Se requiere una cuenta MineLatino autenticada', 401);
+    const owner = accountOwner.account_id;
+    id = cosmeticId(id);
+    requireThat(typeof idempotencyKey === 'string' && /^[a-zA-Z0-9_-]{16,80}$/.test(idempotencyKey), 'Clave de idempotencia inválida');
+    return this.store.transaction(() => {
+      const old = this.store.db.prepare('SELECT * FROM cosmetic_orders WHERE owner=? AND idempotency_key=?').get(owner, idempotencyKey);
+      if (old) {
+        requireThat(old.cosmetic_id === id && old.provider === 'free', 'Clave utilizada para otra operación', 409);
+        return publicOrder(old);
+      }
+      const item = this.store.cosmetic(id), product = this.store.product(id);
+      requireThat(item.status === 'published' && product.amountMinor === 0, 'Este cosmético no está disponible gratis', 409);
+      requireThat(!this.store.db.prepare('SELECT 1 FROM account_entitlements WHERE account_id=? AND cosmetic_id=? AND active=1').get(owner, id), 'Ya tienes este cosmético', 409);
+      requireThat(!this.store.db.prepare("SELECT 1 FROM cosmetic_orders WHERE owner=? AND owner_type='account' AND cosmetic_id=? AND provider='free' AND status='paid'").get(owner, id), 'Este cosmético gratuito ya fue reclamado por tu cuenta', 409);
+      this.reserveStock(id, product);
+      const orderId = randomUUID(), now = Date.now(), paymentId = `free:${orderId}`;
+      this.store.db.prepare(`INSERT INTO cosmetic_orders(id,owner,cosmetic_id,provider,amount_minor,currency,status,idempotency_key,
+        payment_id,created_at,updated_at,delivered_at,owner_type,stock_reserved) VALUES(?,?,?,?,? ,?,'paid',?,?,?,?,?,'account',0)`)
+        .run(orderId, owner, id, 'free', 0, product.currency, idempotencyKey, paymentId, now, now, now);
+      this.grant('account', owner, id);
+      this.store.audit('commerce', 'free-claim.fulfilled', { orderId, owner, ownerType: 'account', cosmeticId: id });
       return publicOrder(this.store.db.prepare('SELECT o.*,c.name cosmetic_name FROM cosmetic_orders o JOIN cosmetics c ON c.id=o.cosmetic_id WHERE o.id=?').get(orderId));
     });
   }
@@ -104,7 +146,10 @@ export class Commerce {
       if (order.status === 'cancelled') return publicOrder(order);
       requireThat(order.status === 'pending', 'Solo se puede cancelar una orden pendiente', 409);
       const changedAt = Date.now();
-      this.store.db.prepare("UPDATE cosmetic_orders SET status='cancelled',cancelled_at=?,updated_at=? WHERE id=?").run(changedAt, changedAt, orderId);
+      if (order.stock_reserved === 1) {
+        this.store.db.prepare("UPDATE cosmetic_products SET stock_remaining=stock_remaining+1 WHERE cosmetic_id=? AND stock_mode='limited'").run(order.cosmetic_id);
+      }
+      this.store.db.prepare("UPDATE cosmetic_orders SET status='cancelled',cancelled_at=?,updated_at=?,stock_reserved=0 WHERE id=?").run(changedAt, changedAt, orderId);
       this.store.audit('commerce', 'order.cancelled', { orderId, owner, ownerType });
       return publicOrder(this.store.db.prepare('SELECT * FROM cosmetic_orders WHERE id=?').get(orderId));
     });
@@ -121,15 +166,13 @@ export class Commerce {
         return { duplicate: true, orderId };
       }
       requireThat(order.status === 'pending', 'Compra no pendiente', 409);
-      this.store.cosmetic(order.cosmetic_id); // Retired cosmetic types cannot be delivered.
+      const item = this.store.cosmetic(order.cosmetic_id); // Retired cosmetic types cannot be delivered.
+      requireThat(item.status === 'published', 'Producto no disponible', 409);
       requireThat(!this.store.db.prepare('SELECT 1 FROM cosmetic_orders WHERE provider=? AND payment_id=?').get(provider, paymentId), 'Pago utilizado en otra compra', 409);
+      if (order.stock_reserved !== 1) this.reserveStock(order.cosmetic_id, this.store.product(order.cosmetic_id));
       const deliveredAt = Date.now();
-      this.store.db.prepare("UPDATE cosmetic_orders SET status='paid',payment_id=?,delivered_at=?,updated_at=? WHERE id=?").run(paymentId, deliveredAt, deliveredAt, orderId);
-      if (order.owner_type === 'account') {
-        this.store.db.prepare('INSERT INTO account_entitlements VALUES(?,?,1) ON CONFLICT(account_id,cosmetic_id) DO UPDATE SET active=1').run(order.owner, order.cosmetic_id);
-      } else {
-        this.store.db.prepare('INSERT INTO entitlements VALUES(?,?,1) ON CONFLICT(uuid,cosmetic_id) DO UPDATE SET active=1').run(order.owner, order.cosmetic_id);
-      }
+      this.store.db.prepare("UPDATE cosmetic_orders SET status='paid',payment_id=?,delivered_at=?,updated_at=?,stock_reserved=0 WHERE id=?").run(paymentId, deliveredAt, deliveredAt, orderId);
+      this.grant(order.owner_type, order.owner, order.cosmetic_id);
       this.store.audit('commerce', 'order.fulfilled', { orderId, owner: order.owner, ownerType: order.owner_type, cosmeticId: order.cosmetic_id, provider, paymentId });
       return { duplicate: false, orderId };
     });

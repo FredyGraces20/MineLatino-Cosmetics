@@ -5,7 +5,7 @@ import { Commerce } from '../src/commerce.mjs';
 import { createApi } from '../src/api.mjs';
 import { AccountAuth } from '../src/accountAuth.mjs';
 const owner = { uuid: '1234567890abcdef1234567890abcdef', premiumVerified: true };
-const product = { description: 'Una mochila', amountMinor: 999, currency: 'USD' };
+const product = { description: 'Una mochila', amountMinor: 999, currency: 'USD', stockMode: 'unlimited', stockRemaining: null };
 function fixture(t) {
   const store = new Store(); t.after(() => store.close());
   store.saveCosmetic('pack', { name: 'Mochila', slot: 'BACKPACK', status: 'published', expectedRevision: 0, product }, 'test');
@@ -15,8 +15,37 @@ test('product metadata preserves old clients and rejects invalid prices', t => {
   const { store } = fixture(t);
   store.saveCosmetic('pack', { name: 'Nueva', slot: 'BACKPACK', status: 'published', expectedRevision: 1 }, 'old-client');
   assert.deepEqual(store.product('pack'), product);
-  for (const amountMinor of [-1, 1.5, 0, '999']) assert.throws(() => store.saveCosmetic('pack', { name: 'Bad', slot: 'BACKPACK', status: 'published', expectedRevision: 2, product: { ...product, amountMinor } }, 'test'));
+  for (const amountMinor of [-1, 1.5, '999']) assert.throws(() => store.saveCosmetic('pack', { name: 'Bad', slot: 'BACKPACK', status: 'published', expectedRevision: 2, product: { ...product, amountMinor } }, 'test'));
   assert.equal(store.cosmetic('pack').revision, 2);
+});
+
+test('limited stock is reserved atomically and restored when an order is cancelled', t => {
+  const { store, commerce } = fixture(t);
+  store.saveCosmetic('pack', { name: 'Limitada', slot: 'BACKPACK', status: 'published', expectedRevision: 1,
+    product: { ...product, stockMode: 'limited', stockRemaining: 1 } }, 'test');
+  const order = commerce.createOrder(owner, 'pack', 'manual', 'limited-stock-order-01');
+  assert.equal(store.product('pack').stockRemaining, 0);
+  assert.throws(() => commerce.createOrder({ uuid: '2234567890abcdef1234567890abcdef', premiumVerified: true }, 'pack', 'manual', 'limited-stock-order-02'), { status: 409 });
+  commerce.cancel(owner, order.id);
+  assert.equal(store.product('pack').stockRemaining, 1);
+});
+
+test('a free product is claimed once and delivered immediately to the MineLatino account', t => {
+  const { store, commerce } = fixture(t);
+  const accountId = 'abcdefabcdefabcdefabcdefabcdefab';
+  store.createPlayerAccount({ accountId, email: 'free@example.com', nick: 'FreeBuyer', passwordHash: 'a'.repeat(64), passwordSalt: 'b'.repeat(32) });
+  store.saveCosmetic('pack', { name: 'Gratis', slot: 'BACKPACK', status: 'published', expectedRevision: 1,
+    product: { ...product, amountMinor: 0, stockMode: 'limited', stockRemaining: 1 } }, 'test');
+  const claimed = commerce.claimFree({ accountId }, 'pack', 'free-claim-request-001');
+  assert.equal(claimed.status, 'paid');
+  assert.equal(claimed.provider, 'free');
+  assert.equal(claimed.amountMinor, 0);
+  assert.equal(store.product('pack').stockRemaining, 0);
+  assert.equal(store.accountWardrobe(accountId).owned[0].id, 'pack');
+  assert.equal(commerce.claimFree({ accountId }, 'pack', 'free-claim-request-001').id, claimed.id);
+  assert.throws(() => commerce.claimFree({ accountId }, 'pack', 'free-claim-request-002'), { status: 409 });
+  store.accountEntitlement({ accountId, cosmeticId: 'pack' }, false, 'admin');
+  assert.throws(() => commerce.claimFree({ accountId }, 'pack', 'free-claim-request-003'), { status: 409 });
 });
 test('public storefront exposes only published products and disables unconfigured providers', async t => {
   const { store } = fixture(t);
@@ -100,4 +129,22 @@ test('authenticated order API lists, cancels and delivers an offline account ord
   assert.equal(delivered.duplicate, false);
   assert.equal(store.accountWardrobe(session.account.accountId).owned[0].id, 'pack');
   assert.equal(commerce.listOwner({ accountId: session.account.accountId })[0].status, 'paid');
+});
+
+test('authenticated free-claim API delivers without a payment confirmation', async t => {
+  const { store, commerce } = fixture(t);
+  const accountAuth = new AccountAuth({ store });
+  const session = await accountAuth.register({ email: 'claim@example.com', password: 'A-secure-password-123', nick: 'Claimant' });
+  store.saveCosmetic('pack', { name: 'Gratis', slot: 'BACKPACK', status: 'published', expectedRevision: 1,
+    product: { ...product, amountMinor: 0, stockMode: 'limited', stockRemaining: 2 } }, 'test');
+  const api = createApi({ store, commerce, accountAuth, adminToken: 'test-only-key-with-at-least-32-characters' });
+  const response = await api(new Request('http://localhost/v1/account/free-claims', { method: 'POST',
+    headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cosmeticId: 'pack', idempotencyKey: 'launcher-free-request-01' }) }));
+  assert.equal(response.status, 201);
+  const order = (await response.json()).order;
+  assert.equal(order.status, 'paid');
+  assert.equal(order.amountMinor, 0);
+  assert.equal(store.product('pack').stockRemaining, 1);
+  assert.equal(store.accountWardrobe(session.account.accountId).owned[0].id, 'pack');
 });

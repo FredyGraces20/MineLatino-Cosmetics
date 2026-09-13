@@ -226,6 +226,12 @@ export function createApi({ store, adminToken, adminAuth, accountAuth, commerce,
           const input = await body(request);
           return json({ order: commerce.createOrder({ accountId }, input.cosmeticId, input.provider, input.idempotencyKey) }, 201);
         }
+        if (method === 'POST' && path === '/v1/account/free-claims') {
+          requireThat(identity.session.scope === 'account', 'Permiso de sesión insuficiente', 403);
+          requireThat(commerce, 'Comercio no configurado', 503);
+          const input = await body(request);
+          return json({ order: commerce.claimFree({ accountId }, input.cosmeticId, input.idempotencyKey) }, 201);
+        }
         const cancelOrderMatch = path.match(/^\/v1\/account\/orders\/([0-9a-f-]{36})\/cancel$/i);
         if (method === 'POST' && cancelOrderMatch) {
           requireThat(identity.session.scope === 'account', 'Permiso de sesión insuficiente', 403);
