@@ -12,7 +12,9 @@ function staticSecurityHeaders(publicDir) {
   const scriptHashes = new Set(), styleHashes = new Set();
   const indexPath = publicDir ? join(publicDir, 'index.html') : '';
   if (indexPath && existsSync(indexPath)) {
-    const html = readFileSync(indexPath, 'utf8');
+    // HTML parsing normalizes CRLF and lone CR to LF before inline script/style
+    // execution. Hash that browser-visible text, not the raw Windows file bytes.
+    const html = readFileSync(indexPath, 'utf8').replace(/\r\n?/g, '\n');
     for (const match of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) {
       if (match[1]) scriptHashes.add(cspHash(match[1]));
     }

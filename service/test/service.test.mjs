@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { Store, validateMenu, DEFAULT_MENU, offlineUuid } from '../src/store.mjs';
 import { PlayerAuth, verifyMojang } from '../src/auth.mjs';
 import { AdminAuth } from '../src/adminAuth.mjs';
@@ -592,6 +593,25 @@ test('admin CSP allowlists exact inline code with hashes', async t => {
   assert.doesNotMatch(csp, /'unsafe-inline'/);
   assert.match(csp, /script-src 'self' 'unsafe-hashes' 'sha256-/);
   assert.match(csp, /style-src 'self' 'unsafe-hashes' 'sha256-/);
+});
+
+test('admin CSP hashes browser-normalized inline code from CRLF HTML', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'minelatino-admin-csp-crlf-'));
+  const inlineScript = 'function safeAction(){\r\n  return true;\r\n}';
+  const inlineStyle = 'body{\r\n  color:red;\r\n}';
+  writeFileSync(join(directory, 'index.html'), `<style>${inlineStyle}</style><button onclick="safeAction()">Go</button><script>${inlineScript}</script>`);
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const server = createHttpServer(async () => Response.json({ ok: true }), 'http://127.0.0.1', directory);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
+  const csp = response.headers.get('content-security-policy');
+  const hash = value => `'sha256-${createHash('sha256').update(value).digest('base64')}'`;
+  assert.ok(csp.includes(hash(inlineScript.replace(/\r\n?/g, '\n'))));
+  assert.ok(csp.includes(hash(inlineStyle.replace(/\r\n?/g, '\n'))));
+  assert.ok(csp.includes(hash('safeAction()')));
+  assert.ok(!csp.includes(hash(inlineScript)));
+  assert.doesNotMatch(csp, /'unsafe-inline'/);
 });
 
 // ── Admin auth tests ──────────────────────────────────────────────────
