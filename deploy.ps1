@@ -10,7 +10,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = $PSScriptRoot
-$repo = 'FredyGraces20/MineLatino-Cosmetics'
+$repo = 'GatinoMC/MineLatino-Cosmetics'
 $tag = "v$Version"
 $javaHome21 = 'C:\Users\fredy\AppData\Roaming\.minecraft\runtime\java-runtime-delta\windows\java-runtime-delta'
 $javaHome25 = if ($env:MINELATINO_JAVA25_HOME) { $env:MINELATINO_JAVA25_HOME } else { 'C:\Program Files\Java\jdk-25.0.3' }
